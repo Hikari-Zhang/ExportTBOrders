@@ -526,13 +526,14 @@ function downloadLogFile(logText, before, after) {
 
 function deliverFiles(result, request) {
   const before = [];
+  const saveLog = !!request.downloadLog;
   try {
     if (result.status === 'complete') {
       const filename = tableFilename(request.startDate, request.endDate, request.format, false);
       const file = exportTable(result.rows, request.format);
       triggerDownload(filename, file.bytes, file.mime);
       before.push({ level: 'info', message: messages.downloadedTable(filename) });
-      downloadLogFile(result.logText, before, [{ level: 'info', message: messages.done() }]);
+      if (saveLog) downloadLogFile(result.logText, before, [{ level: 'info', message: messages.done() }]);
       return;
     }
     if (result.status === 'partial-ready') {
@@ -552,5 +553,5 @@ function deliverFiles(result, request) {
     const reason = error instanceof Error ? error.message : String(error);
     before.push({ level: 'error', message: messages.exportFailed(reason) });
   }
-  downloadLogFile(result.logText, before, []);
+  if (saveLog) downloadLogFile(result.logText, before, []);
 }

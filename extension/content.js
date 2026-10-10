@@ -34590,6 +34590,7 @@
           '<label><input name="format" type="radio" value="xlsx" checked> Excel</label>',
           '<label><input name="format" type="radio" value="csv"> CSV</label>',
           "</fieldset>",
+          '<label><input id="download-log" type="checkbox"> \u4E0B\u8F7D\u65E5\u5FD7</label>',
           '<button id="export" class="action" type="button">\u5F00\u59CB\u5BFC\u51FA</button>',
           '<button id="resume" class="action" type="button" hidden>\u6211\u5DF2\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u7EE7\u7EED</button>',
           '<p id="progress"></p>',
@@ -34650,7 +34651,8 @@
             startDate: startInput.value,
             endDate: endInput.value,
             format: selectedFormat(),
-            statuses: selectedStatuses()
+            statuses: selectedStatuses(),
+            downloadLog: shadow.getElementById("download-log").checked
           });
         });
         resumeButton.addEventListener("click", () => {
@@ -35194,13 +35196,14 @@
   }
   function deliverFiles(result, request) {
     const before = [];
+    const saveLog = !!request.downloadLog;
     try {
       if (result.status === "complete") {
         const filename = tableFilename(request.startDate, request.endDate, request.format, false);
         const file = exportTable(result.rows, request.format);
         triggerDownload(filename, file.bytes, file.mime);
         before.push({ level: "info", message: messages.downloadedTable(filename) });
-        downloadLogFile(result.logText, before, [{ level: "info", message: messages.done() }]);
+        if (saveLog) downloadLogFile(result.logText, before, [{ level: "info", message: messages.done() }]);
         return;
       }
       if (result.status === "partial-ready") {
@@ -35220,7 +35223,7 @@
       const reason = error instanceof Error ? error.message : String(error);
       before.push({ level: "error", message: messages.exportFailed(reason) });
     }
-    downloadLogFile(result.logText, before, []);
+    if (saveLog) downloadLogFile(result.logText, before, []);
   }
 })();
 /*! Bundled license information:

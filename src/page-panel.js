@@ -55,6 +55,7 @@ function mountPagePanel(actions) {
     '<label><input name="format" type="radio" value="xlsx" checked> Excel</label>',
     '<label><input name="format" type="radio" value="csv"> CSV</label>',
     '</fieldset>',
+    '<label><input id="download-log" type="checkbox"> 下载日志</label>',
     '<button id="export" class="action" type="button">开始导出</button>',
     '<button id="resume" class="action" type="button" hidden>我已完成验证，继续</button>',
     '<p id="progress"></p>',
@@ -122,6 +123,7 @@ function mountPagePanel(actions) {
       endDate: endInput.value,
       format: selectedFormat(),
       statuses: selectedStatuses(),
+      downloadLog: shadow.getElementById('download-log').checked,
     });
   });
   resumeButton.addEventListener('click', () => {

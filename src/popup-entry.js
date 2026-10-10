@@ -31,6 +31,7 @@ let resultReceived = false;
 let savedStartDate = '';
 let savedEndDate = '';
 let savedFormat = 'xlsx';
+let savedDownloadLog = false;
 let tabUrl = '';
 const logger = createLogger(() => new Date());
 
@@ -79,6 +80,7 @@ function addLog(level, message) {
 }
 
 function downloadLog() {
+  if (!savedDownloadLog) return;
   const filename = logFilename(new Date());
   addLog('info', messages.downloadedLog(filename));
   download(filename, encodeLogText(logger.text()), 'text/plain;charset=utf-8');
@@ -101,6 +103,7 @@ exportButton.addEventListener('click', async () => {
     return;
   }
   starting = true;
+  savedDownloadLog = document.getElementById('download-log').checked;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   tabUrl = tab && tab.url ? tab.url : '';
   render();
@@ -161,11 +164,13 @@ exportButton.addEventListener('click', async () => {
           const filename = tableFilename(savedStartDate, savedEndDate, savedFormat, false);
           const file = exportTable(message.result.rows, savedFormat);
           download(filename, file.bytes, file.mime);
-          const logName = logFilename(new Date());
           addLog('info', messages.downloadedTable(filename));
-          addLog('info', messages.downloadedLog(logName));
           addLog('info', messages.done());
-          download(logName, encodeLogText(logger.text()), 'text/plain;charset=utf-8');
+          if (savedDownloadLog) {
+            const logName = logFilename(new Date());
+            addLog('info', messages.downloadedLog(logName));
+            download(logName, encodeLogText(logger.text()), 'text/plain;charset=utf-8');
+          }
         } else {
           downloadLog();
           render();
@@ -181,7 +186,9 @@ exportButton.addEventListener('click', async () => {
     if (port !== activePort) return;
     port = null;
     running = false;
-    progress.textContent = '弹窗已关闭，导出仍在订单页继续。完成后会下载表格和日志。';
+    progress.textContent = savedDownloadLog
+      ? '弹窗已关闭，导出仍在订单页继续。完成后会下载表格和日志。'
+      : '弹窗已关闭，导出仍在订单页继续。完成后会下载表格。';
     render();
   });
   starting = false;
@@ -193,6 +200,7 @@ exportButton.addEventListener('click', async () => {
     endDate: savedEndDate,
     format: savedFormat,
     statuses,
+    downloadLog: savedDownloadLog,
   });
 });
 

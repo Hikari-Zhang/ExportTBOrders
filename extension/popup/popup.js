@@ -33774,6 +33774,7 @@
   var savedStartDate = "";
   var savedEndDate = "";
   var savedFormat = "xlsx";
+  var savedDownloadLog = false;
   var tabUrl = "";
   var logger = createLogger(() => /* @__PURE__ */ new Date());
   function selectedFormat() {
@@ -33816,6 +33817,7 @@
     render();
   }
   function downloadLog() {
+    if (!savedDownloadLog) return;
     const filename = logFilename(/* @__PURE__ */ new Date());
     addLog("info", messages.downloadedLog(filename));
     download(filename, encodeLogText(logger.text()), "text/plain;charset=utf-8");
@@ -33835,6 +33837,7 @@
       return;
     }
     starting = true;
+    savedDownloadLog = document.getElementById("download-log").checked;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     tabUrl = tab && tab.url ? tab.url : "";
     render();
@@ -33895,11 +33898,13 @@
             const filename = tableFilename(savedStartDate, savedEndDate, savedFormat, false);
             const file = exportTable(message.result.rows, savedFormat);
             download(filename, file.bytes, file.mime);
-            const logName = logFilename(/* @__PURE__ */ new Date());
             addLog("info", messages.downloadedTable(filename));
-            addLog("info", messages.downloadedLog(logName));
             addLog("info", messages.done());
-            download(logName, encodeLogText(logger.text()), "text/plain;charset=utf-8");
+            if (savedDownloadLog) {
+              const logName = logFilename(/* @__PURE__ */ new Date());
+              addLog("info", messages.downloadedLog(logName));
+              download(logName, encodeLogText(logger.text()), "text/plain;charset=utf-8");
+            }
           } else {
             downloadLog();
             render();
@@ -33915,7 +33920,7 @@
       if (port !== activePort) return;
       port = null;
       running = false;
-      progress.textContent = "\u5F39\u7A97\u5DF2\u5173\u95ED\uFF0C\u5BFC\u51FA\u4ECD\u5728\u8BA2\u5355\u9875\u7EE7\u7EED\u3002\u5B8C\u6210\u540E\u4F1A\u4E0B\u8F7D\u8868\u683C\u548C\u65E5\u5FD7\u3002";
+      progress.textContent = savedDownloadLog ? "\u5F39\u7A97\u5DF2\u5173\u95ED\uFF0C\u5BFC\u51FA\u4ECD\u5728\u8BA2\u5355\u9875\u7EE7\u7EED\u3002\u5B8C\u6210\u540E\u4F1A\u4E0B\u8F7D\u8868\u683C\u548C\u65E5\u5FD7\u3002" : "\u5F39\u7A97\u5DF2\u5173\u95ED\uFF0C\u5BFC\u51FA\u4ECD\u5728\u8BA2\u5355\u9875\u7EE7\u7EED\u3002\u5B8C\u6210\u540E\u4F1A\u4E0B\u8F7D\u8868\u683C\u3002";
       render();
     });
     starting = false;
@@ -33926,7 +33931,8 @@
       startDate: savedStartDate,
       endDate: savedEndDate,
       format: savedFormat,
-      statuses
+      statuses,
+      downloadLog: savedDownloadLog
     });
   });
   resumeButton.addEventListener("click", () => {
