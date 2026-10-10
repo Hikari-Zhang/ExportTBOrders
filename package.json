@@ -3,5 +3,8 @@
   "private": true,
   "scripts": {
     "test": "node --test"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
 }
