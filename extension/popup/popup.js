@@ -33545,10 +33545,10 @@
         const sheet = XLSX.utils.aoa_to_sheet([COLUMNS, ...rows.map(rowValues)]);
         const book = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(book, sheet, "\u8BA2\u5355");
-        const buffer = XLSX.write(book, { type: "buffer", bookType: "xlsx" });
+        const output = XLSX.write(book, { type: "array", bookType: "xlsx" });
         return {
           mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          bytes: new Uint8Array(buffer)
+          bytes: new Uint8Array(output)
         };
       }
       module.exports = { exportTable: exportTable2 };
@@ -33802,12 +33802,9 @@
     port.onDisconnect.addListener(() => {
       if (port !== activePort) return;
       port = null;
-      if (running && !resultReceived) {
-        running = false;
-        addLog("error", messages.portClosed());
-        downloadLog();
-        render();
-      }
+      running = false;
+      progress.textContent = "\u5F39\u7A97\u5DF2\u5173\u95ED\uFF0C\u5BFC\u51FA\u4ECD\u5728\u8BA2\u5355\u9875\u7EE7\u7EED\u3002\u5B8C\u6210\u540E\u4F1A\u4E0B\u8F7D\u8868\u683C\u548C\u65E5\u5FD7\u3002";
+      render();
     });
     starting = false;
     running = true;

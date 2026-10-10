@@ -21,10 +21,10 @@ function exportTable(rows, format) {
   const sheet = XLSX.utils.aoa_to_sheet([COLUMNS, ...rows.map(rowValues)]);
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, '订单');
-  const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+  const output = XLSX.write(book, { type: 'array', bookType: 'xlsx' });
   return {
     mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    bytes: new Uint8Array(buffer),
+    bytes: new Uint8Array(output),
   };
 }
 

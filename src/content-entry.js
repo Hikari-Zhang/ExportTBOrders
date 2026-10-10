@@ -1,9 +1,11 @@
 const { runExport, appendDownloadLogs } = require('./run-export');
 const { createLogger } = require('./logger');
 const { messages } = require('./messages');
-const { decodeBytes } = require('./decode');
+const { decodeResponseBytes } = require('./decode');
 const { encodeLogText } = require('./log-file');
-const { logFilename } = require('./filenames');
+const { exportTable } = require('./export-table');
+const { tableFilename, logFilename } = require('./filenames');
+const { buildRows } = require('./parse-orders');
 
 const LIST_PATH = '/trade/itemlist/asyncBought.htm?action=itemlist/BoughtQueryAction&event_submit_do_query=1&_input_charset=utf8';
 
@@ -48,13 +50,69 @@ async function fetchPage(pageNum) {
     body,
   });
   const bytes = new Uint8Array(await response.arrayBuffer());
-  return { ok: response.ok, status: response.status, text: decodeBytes(bytes, 'utf-8') };
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: decodeResponseBytes(bytes, response.headers.get('content-type')),
+  };
 }
 
 async function fetchLogistics(orderId) {
   const response = await fetch(logisticsUrl(orderId), { credentials: 'include' });
   const bytes = new Uint8Array(await response.arrayBuffer());
-  return { ok: response.ok, status: response.status, text: decodeBytes(bytes, 'gbk') };
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: decodeResponseBytes(bytes, response.headers.get('content-type')),
+  };
+}
+
+function withExtraLogs(logText, entries) {
+  const logger = createLogger(() => new Date());
+  appendDownloadLogs(logger, () => {}, entries);
+  return `${logText}${logger.text()}`;
+}
+
+function downloadLogFile(logText, before, after) {
+  const filename = logFilename(new Date());
+  const lines = before.concat(
+    [{ level: 'info', message: messages.downloadedLog(filename) }],
+    after
+  );
+  setTimeout(() => {
+    triggerDownload(filename, encodeLogText(withExtraLogs(logText, lines)), 'text/plain;charset=utf-8');
+  }, 500);
+}
+
+function deliverFiles(result, request) {
+  const before = [];
+  try {
+    if (result.status === 'complete') {
+      const filename = tableFilename(request.startDate, request.endDate, request.format, false);
+      const file = exportTable(result.rows, request.format);
+      triggerDownload(filename, file.bytes, file.mime);
+      before.push({ level: 'info', message: messages.downloadedTable(filename) });
+      downloadLogFile(result.logText, before, [{ level: 'info', message: messages.done() }]);
+      return;
+    }
+    if (result.status === 'partial-ready') {
+      const built = buildRows(result.keptOrders || [], result.logisticsById || {});
+      if (built.rows.length > 0) {
+        const filename = tableFilename(request.startDate, request.endDate, request.format, true);
+        const file = exportTable(built.rows, request.format);
+        triggerDownload(filename, file.bytes, file.mime);
+        before.push({
+          level: 'info',
+          message: messages.partialExported(result.orderCount, built.rows.length, filename),
+        });
+        before.push({ level: 'info', message: messages.downloadedTable(filename) });
+      }
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    before.push({ level: 'error', message: messages.exportFailed(reason) });
+  }
+  downloadLogFile(result.logText, before, []);
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -63,7 +121,6 @@ chrome.runtime.onConnect.addListener((port) => {
   let disconnected = false;
   port.onDisconnect.addListener(() => {
     disconnected = true;
-    if (running) stopKind = 'popup-closed';
   });
   port.onMessage.addListener(async (message) => {
     if (message.type === 'cancel') {
@@ -79,7 +136,6 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage(payload);
       } catch {
         disconnected = true;
-        stopKind = 'popup-closed';
       }
     }
     try {
@@ -100,18 +156,14 @@ chrome.runtime.onConnect.addListener((port) => {
         },
       });
       if (disconnected) {
-        const filename = logFilename(new Date());
-        const extra = [];
-        if (!result.logText.includes(messages.popupClosed())) {
-          extra.push({ level: 'warn', message: messages.popupClosed() });
-        }
-        extra.push({ level: 'info', message: messages.downloadedLog(filename) });
-        const closedLogger = createLogger(() => new Date());
-        appendDownloadLogs(closedLogger, () => {}, extra);
-        triggerDownload(filename, encodeLogText(`${result.logText}${closedLogger.text()}`), 'text/plain;charset=utf-8');
+        deliverFiles(result, message);
         return;
       }
-      port.postMessage({ type: 'result', result });
+      try {
+        port.postMessage({ type: 'result', result });
+      } catch {
+        deliverFiles(result, message);
+      }
     } finally {
       running = false;
     }

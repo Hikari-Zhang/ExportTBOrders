@@ -155,12 +155,9 @@ exportButton.addEventListener('click', async () => {
   port.onDisconnect.addListener(() => {
     if (port !== activePort) return;
     port = null;
-    if (running && !resultReceived) {
-      running = false;
-      addLog('error', messages.portClosed());
-      downloadLog();
-      render();
-    }
+    running = false;
+    progress.textContent = '弹窗已关闭，导出仍在订单页继续。完成后会下载表格和日志。';
+    render();
   });
   starting = false;
   running = true;
