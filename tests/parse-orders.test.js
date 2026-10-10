@@ -93,6 +93,24 @@ test('没有单价时使用商品小计', () => {
   assert.deepEqual(logs, [{ level: 'warn', message: '订单 100 缺少单价，该列使用商品小计' }]);
 });
 
+test('规格是属性对象时拼成文字', () => {
+  const source = order({
+    subOrders: [{
+      quantity: 1,
+      itemInfo: {
+        title: '内裤',
+        skuText: [
+          { name: '尺码', value: '2XL' },
+          { name: '颜色分类', value: '平安' },
+        ],
+      },
+      priceInfo: { price: '60.00' },
+    }],
+  });
+  const { rows } = buildRows([source], {});
+  assert.equal(rows[0]['规格'], '尺码: 2XL 颜色分类: 平安');
+});
+
 test('缺少店铺时留空并警告，订单仍保留', () => {
   const source = order({ seller: {} });
   const { rows, logs } = buildRows([source], {});

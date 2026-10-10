@@ -131,6 +131,18 @@
         queryingLogistics(index, total, orderId) {
           return `\u6B63\u5728\u67E5\u8BE2\u7269\u6D41 ${index}/${total}\uFF0C\u8BA2\u5355 ${orderId}`;
         },
+        legacyLogistics(orderId) {
+          return `\u8BA2\u5355 ${orderId} \u65B0\u63A5\u53E3\u65E0\u7269\u6D41\uFF0C\u6539\u67E5\u65E7\u7248\u8BA2\u5355\u8BE6\u60C5`;
+        },
+        legacyBlocked(orderId) {
+          return `\u8BA2\u5355 ${orderId} \u65E7\u7248\u8BA2\u5355\u8BE6\u60C5\u89E6\u53D1\u9A8C\u8BC1\uFF0C\u672C\u5355\u7269\u6D41\u7559\u7A7A`;
+        },
+        skipStatus(orderId, status) {
+          return `\u8BA2\u5355 ${orderId} \u72B6\u6001\u4E3A\u300C${status}\u300D\uFF0C\u4E0D\u5728\u6240\u9009\u72B6\u6001\u4E2D\uFF0C\u5DF2\u8DF3\u8FC7`;
+        },
+        statusFilter(labels) {
+          return `\u5BFC\u51FA\u6240\u9009\u72B6\u6001\uFF1A${labels}`;
+        },
         logisticsWithTrace(orderId, company, trackingNo, latest) {
           return `\u8BA2\u5355 ${orderId} \u7269\u6D41\uFF1A${company} ${trackingNo} ${latest}`;
         },
@@ -196,12 +208,14 @@
       function popupView2(state) {
         const onOrderPage = isOrderListUrl(state.url);
         const dateError2 = state.startDate > state.endDate;
+        const statusError2 = Array.isArray(state.statuses) && state.statuses.length === 0;
         return {
           showOpenPage: !onOrderPage,
-          exportDisabled: state.running ? false : !onOrderPage || dateError2,
+          exportDisabled: state.running ? false : !onOrderPage || dateError2 || statusError2,
           exportLabel: state.running ? "\u53D6\u6D88" : "\u5F00\u59CB\u5BFC\u51FA",
           showPartial: !state.running && !!(state.result && state.result.status === "partial-ready"),
           dateError: dateError2,
+          statusError: statusError2,
           pageMessage: onOrderPage ? "" : messages2.wrongPage(),
           orderPageUrl: ORDER_PAGE
         };
@@ -33586,6 +33600,21 @@
         if (value == null) return "";
         return String(value);
       }
+      function formatSku(value) {
+        if (value == null || value === "") return "";
+        if (typeof value === "string" || typeof value === "number") return String(value);
+        if (Array.isArray(value)) return value.map(formatSku).filter(Boolean).join(" ");
+        if (typeof value === "object") {
+          const name = value.name || value.propName || value.text;
+          const content = value.value || value.content || value.desc;
+          if (name != null && content != null && typeof content !== "object") {
+            return `${formatSku(name)}: ${formatSku(content)}`;
+          }
+          if (content != null && typeof content !== "object") return formatSku(content);
+          return Object.values(value).map(formatSku).filter(Boolean).join(" ");
+        }
+        return "";
+      }
       function blank(orderId, fieldName, logs) {
         logs.push({ level: "warn", message: messages2.missingField(orderId, fieldName) });
         return "";
@@ -33618,7 +33647,7 @@
               price = blank(orderId, "\u5355\u4EF7", logs);
             } else {
               title = sub.itemInfo ? textOf(sub.itemInfo.title) : "";
-              sku = sub.itemInfo ? textOf(sub.itemInfo.skuText) : "";
+              sku = sub.itemInfo ? formatSku(sub.itemInfo.skuText) : "";
               quantity = textOf(sub.quantity);
               const priceInfo = sub.priceInfo || {};
               if (priceInfo.price != null && priceInfo.price !== "") {
@@ -33669,6 +33698,7 @@
   var startInput = document.getElementById("start-date");
   var endInput = document.getElementById("end-date");
   var dateError = document.getElementById("date-error");
+  var statusError = document.getElementById("status-error");
   var exportButton = document.getElementById("export");
   var partialButton = document.getElementById("partial");
   var progress = document.getElementById("progress");
@@ -33690,17 +33720,22 @@
     const picked = document.querySelector('input[name="format"]:checked');
     return picked ? picked.value : "xlsx";
   }
+  function selectedStatuses() {
+    return Array.from(document.querySelectorAll('input[name="status"]:checked')).map((item) => item.value);
+  }
   function render() {
     const view = popupView({
       url: tabUrl,
       running,
       startDate: startInput.value,
       endDate: endInput.value,
+      statuses: selectedStatuses(),
       result: lastResult
     });
     pageMessage.textContent = view.pageMessage;
     openPage.hidden = !view.showOpenPage;
     dateError.hidden = !view.dateError;
+    statusError.hidden = !view.statusError;
     exportButton.disabled = view.exportDisabled;
     exportButton.textContent = view.exportLabel;
     partialButton.hidden = !view.showPartial;
@@ -33730,6 +33765,9 @@
   });
   startInput.addEventListener("change", render);
   endInput.addEventListener("change", render);
+  document.querySelectorAll('input[name="status"]').forEach((item) => {
+    item.addEventListener("change", render);
+  });
   exportButton.addEventListener("click", async () => {
     if (starting) return;
     if (running) {
@@ -33745,6 +33783,7 @@
       running: false,
       startDate: startInput.value,
       endDate: endInput.value,
+      statuses: selectedStatuses(),
       result: lastResult
     });
     if (view.showOpenPage) {
@@ -33759,12 +33798,19 @@
       downloadLog();
       return;
     }
+    if (view.statusError) {
+      starting = false;
+      addLog("error", "\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u79CD\u8BA2\u5355\u72B6\u6001");
+      render();
+      return;
+    }
     logger.lines.length = 0;
     lastResult = null;
     resultReceived = false;
     savedStartDate = startInput.value;
     savedEndDate = endInput.value;
     savedFormat = selectedFormat();
+    const statuses = selectedStatuses();
     port = chrome.tabs.connect(tab.id, { name: "tb-order-export" });
     const activePort = port;
     port.onMessage.addListener((message) => {
@@ -33813,7 +33859,8 @@
       type: "start",
       startDate: savedStartDate,
       endDate: savedEndDate,
-      format: savedFormat
+      format: savedFormat,
+      statuses
     });
   });
   partialButton.addEventListener("click", () => {

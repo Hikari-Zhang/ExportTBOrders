@@ -12,6 +12,7 @@ const openPage = document.getElementById('open-page');
 const startInput = document.getElementById('start-date');
 const endInput = document.getElementById('end-date');
 const dateError = document.getElementById('date-error');
+const statusError = document.getElementById('status-error');
 const exportButton = document.getElementById('export');
 const partialButton = document.getElementById('partial');
 const progress = document.getElementById('progress');
@@ -37,17 +38,23 @@ function selectedFormat() {
   return picked ? picked.value : 'xlsx';
 }
 
+function selectedStatuses() {
+  return Array.from(document.querySelectorAll('input[name="status"]:checked')).map((item) => item.value);
+}
+
 function render() {
   const view = popupView({
     url: tabUrl,
     running,
     startDate: startInput.value,
     endDate: endInput.value,
+    statuses: selectedStatuses(),
     result: lastResult,
   });
   pageMessage.textContent = view.pageMessage;
   openPage.hidden = !view.showOpenPage;
   dateError.hidden = !view.dateError;
+  statusError.hidden = !view.statusError;
   exportButton.disabled = view.exportDisabled;
   exportButton.textContent = view.exportLabel;
   partialButton.hidden = !view.showPartial;
@@ -82,6 +89,9 @@ openPage.addEventListener('click', () => {
 
 startInput.addEventListener('change', render);
 endInput.addEventListener('change', render);
+document.querySelectorAll('input[name="status"]').forEach((item) => {
+  item.addEventListener('change', render);
+});
 
 exportButton.addEventListener('click', async () => {
   if (starting) return;
@@ -98,6 +108,7 @@ exportButton.addEventListener('click', async () => {
     running: false,
     startDate: startInput.value,
     endDate: endInput.value,
+    statuses: selectedStatuses(),
     result: lastResult,
   });
   if (view.showOpenPage) {
@@ -112,12 +123,19 @@ exportButton.addEventListener('click', async () => {
     downloadLog();
     return;
   }
+  if (view.statusError) {
+    starting = false;
+    addLog('error', '请至少选择一种订单状态');
+    render();
+    return;
+  }
   logger.lines.length = 0;
   lastResult = null;
   resultReceived = false;
   savedStartDate = startInput.value;
   savedEndDate = endInput.value;
   savedFormat = selectedFormat();
+  const statuses = selectedStatuses();
   port = chrome.tabs.connect(tab.id, { name: 'tb-order-export' });
   const activePort = port;
   port.onMessage.addListener((message) => {
@@ -167,6 +185,7 @@ exportButton.addEventListener('click', async () => {
     startDate: savedStartDate,
     endDate: savedEndDate,
     format: savedFormat,
+    statuses,
   });
 });
 

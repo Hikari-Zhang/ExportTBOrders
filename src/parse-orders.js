@@ -12,6 +12,22 @@ function textOf(value) {
   return String(value);
 }
 
+function formatSku(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.map(formatSku).filter(Boolean).join(' ');
+  if (typeof value === 'object') {
+    const name = value.name || value.propName || value.text;
+    const content = value.value || value.content || value.desc;
+    if (name != null && content != null && typeof content !== 'object') {
+      return `${formatSku(name)}: ${formatSku(content)}`;
+    }
+    if (content != null && typeof content !== 'object') return formatSku(content);
+    return Object.values(value).map(formatSku).filter(Boolean).join(' ');
+  }
+  return '';
+}
+
 function blank(orderId, fieldName, logs) {
   logs.push({ level: 'warn', message: messages.missingField(orderId, fieldName) });
   return '';
@@ -49,7 +65,7 @@ function buildRows(orders, logisticsById) {
         price = blank(orderId, '单价', logs);
       } else {
         title = sub.itemInfo ? textOf(sub.itemInfo.title) : '';
-        sku = sub.itemInfo ? textOf(sub.itemInfo.skuText) : '';
+        sku = sub.itemInfo ? formatSku(sub.itemInfo.skuText) : '';
         quantity = textOf(sub.quantity);
         const priceInfo = sub.priceInfo || {};
         if (priceInfo.price != null && priceInfo.price !== '') {

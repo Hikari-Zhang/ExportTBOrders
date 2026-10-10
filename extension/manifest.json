@@ -7,9 +7,13 @@
     "default_title": "淘宝订单导出",
     "default_popup": "popup/popup.html"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
     "https://buyertrade.taobao.com/*",
-    "https://trade.taobao.com/*"
+    "https://trade.taobao.com/*",
+    "https://tradearchive.taobao.com/*"
   ],
   "content_scripts": [
     {

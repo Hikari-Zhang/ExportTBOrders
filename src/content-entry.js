@@ -2,6 +2,7 @@ const { runExport, appendDownloadLogs } = require('./run-export');
 const { createLogger } = require('./logger');
 const { messages } = require('./messages');
 const { decodeResponseBytes } = require('./decode');
+const { parseLegacyLogistics } = require('./parse-legacy-logistics');
 const { encodeLogText } = require('./log-file');
 const { exportTable } = require('./export-table');
 const { tableFilename, logFilename } = require('./filenames');
@@ -55,6 +56,49 @@ async function fetchPage(pageNum) {
     status: response.status,
     text: decodeResponseBytes(bytes, response.headers.get('content-type')),
   };
+}
+
+function detailPageUrls(orderId) {
+  const id = encodeURIComponent(orderId);
+  return [
+    `https://trade.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
+    `https://buyertrade.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
+    `https://tradearchive.taobao.com/trade/detail/trade_item_detail.htm?biz_order_id=${id}`,
+    `https://tradearchive.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
+  ];
+}
+
+async function requestLegacyPage(url) {
+  const response = await chrome.runtime.sendMessage({
+    type: 'fetch-legacy-logistics',
+    url,
+  });
+  if (!response) return { ok: false, status: 0, text: '' };
+  const bytes = new Uint8Array(response.bytes || []);
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: decodeResponseBytes(bytes, response.contentType),
+  };
+}
+
+function pageHasWaybill(text) {
+  const parsed = parseLegacyLogistics(text);
+  return !!(parsed.ok && (parsed.company || parsed.trackingNo));
+}
+
+async function fetchLegacyLogistics(orderId) {
+  const urls = detailPageUrls(orderId);
+  let last = { ok: false, status: 0, text: '' };
+  for (const url of urls) {
+    const page = await requestLegacyPage(url);
+    last = page;
+    const text = page.text || '';
+    const blocked = text.includes('_____tmd_____') || text.includes('x5secdata') || text.includes('rgv587_flag');
+    if (blocked && !text.includes('物流公司') && !text.includes('运单号')) continue;
+    if (page.ok && pageHasWaybill(text)) return page;
+  }
+  return last;
 }
 
 async function fetchLogistics(orderId) {
@@ -143,8 +187,10 @@ chrome.runtime.onConnect.addListener((port) => {
         startDate: message.startDate,
         endDate: message.endDate,
         format: message.format,
+        statuses: message.statuses,
         fetchPage,
         fetchLogistics,
+        fetchLegacyLogistics,
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         shouldStop: () => stopKind,
         now: () => new Date(),

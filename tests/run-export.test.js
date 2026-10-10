@@ -364,6 +364,132 @@ test('物流风控停止时保留已查到的物流', async () => {
   });
 });
 
+test('新接口没有物流时改查旧版物流页', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [{
+          ...order('old-1', '2025-06-01 10:00:00', '交易成功', '旧订单'),
+          seller: { shopName: '示例店', id: '9001' },
+        }],
+      }),
+    },
+  };
+  const legacyCalls = [];
+  const h = harness(pages, {
+    'old-1': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'false' }) },
+  }, { startDate: '2025-01-01', endDate: '2025-12-31' });
+  h.input.fetchLegacyLogistics = async (orderId) => {
+    legacyCalls.push(orderId);
+    return {
+      ok: true,
+      status: 200,
+      text: '<p>物流公司：<em>圆通速递</em></p><p>运单号码：<em>YT100</em></p><p>2025-06-02 16:21:08 已签收</p>',
+    };
+  };
+  const result = await runExport(h.input);
+  assert.deepEqual(legacyCalls, ['old-1']);
+  assert.equal(result.rows[0]['物流公司'], '圆通速递');
+  assert.equal(result.rows[0]['运单号'], 'YT100');
+  assert.equal(result.rows[0]['最新物流'], '已签收');
+  assert.ok(messagesOf(h.logs).includes('订单 old-1 新接口无物流，改查旧版订单详情'));
+  assert.ok(messagesOf(h.logs).includes('订单 old-1 物流：圆通速递 YT100 已签收'));
+});
+
+test('旧版页面含风控脚本字样时仍解析物流并继续后面的订单', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          { ...order('old-1', '2025-06-01 10:00:00', '交易成功', '旧'), seller: { shopName: '示例店', id: '9001' } },
+          order('new-2', '2025-06-02 10:00:00', '交易成功', '新'),
+        ],
+      }),
+    },
+  };
+  const h = harness(pages, {
+    'old-1': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'false' }) },
+    'new-2': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'true', expressName: '顺丰速运', expressId: 'SF1' }) },
+  }, { startDate: '2025-01-01', endDate: '2025-12-31' });
+  h.input.fetchLegacyLogistics = async () => ({
+    ok: true,
+    status: 200,
+    text: '<script>var punish = true; 验证码</script><p>物流公司：<em>圆通速递</em></p><p>运单号码：<em>YT100</em></p><p>2025-06-02 16:21:08 已签收</p>',
+  });
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.rows[0]['运单号'], 'YT100');
+  assert.equal(result.rows[1]['运单号'], 'SF1');
+  assert.equal(messagesOf(h.logs).some((line) => line.includes('触发验证码或风控')), false);
+});
+
+test('某一单旧版详情被拦截时，后面的订单仍查旧版详情', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          order('old-1', '2025-06-01 10:00:00', '交易成功', '旧'),
+          order('old-2', '2025-06-02 10:00:00', '交易成功', '旧2'),
+        ],
+      }),
+    },
+  };
+  let legacyCalls = 0;
+  const h = harness(pages, {
+    'old-1': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'false' }) },
+    'old-2': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'false' }) },
+  }, { startDate: '2025-01-01', endDate: '2025-12-31' });
+  h.input.fetchLegacyLogistics = async (orderId) => {
+    legacyCalls += 1;
+    if (orderId === 'old-1') return { ok: true, status: 200, text: '<html>_____tmd_____ x5secdata</html>' };
+    return {
+      ok: true,
+      status: 200,
+      text: '<p>物流公司：韵达快递</p><p>运单号：434673370490781</p>',
+    };
+  };
+  const result = await runExport(h.input);
+  assert.equal(legacyCalls, 2);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.rows[1]['物流公司'], '韵达快递');
+  assert.equal(result.rows[1]['运单号'], '434673370490781');
+  assert.equal(messagesOf(h.logs).some((line) => line.includes('触发验证码或风控，已停止')), false);
+});
+
+test('只导出选中的订单状态', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          order('paid', '2026-10-01 10:00:00', '交易成功', '已完成'),
+          order('unpaid', '2026-10-01 11:00:00', '等待买家付款', '未付款'),
+        ],
+      }),
+    },
+  };
+  const h = harness(pages, {
+    paid: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({ isSuccess: 'true', expressName: '中通', expressId: 'ZT1' }),
+    },
+  });
+  h.input.statuses = ['success'];
+  const result = await runExport(h.input);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0]['订单号'], 'paid');
+  assert.ok(messagesOf(h.logs).includes('导出所选状态：交易成功'));
+  assert.ok(messagesOf(h.logs).includes('订单 unpaid 状态为「等待买家付款」，不在所选状态中，已跳过'));
+});
+
 test('开始日期晚于结束日期时不发请求', async () => {
   let called = false;
   const h = harness({}, {});

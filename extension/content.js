@@ -72,6 +72,18 @@
         queryingLogistics(index, total, orderId) {
           return `\u6B63\u5728\u67E5\u8BE2\u7269\u6D41 ${index}/${total}\uFF0C\u8BA2\u5355 ${orderId}`;
         },
+        legacyLogistics(orderId) {
+          return `\u8BA2\u5355 ${orderId} \u65B0\u63A5\u53E3\u65E0\u7269\u6D41\uFF0C\u6539\u67E5\u65E7\u7248\u8BA2\u5355\u8BE6\u60C5`;
+        },
+        legacyBlocked(orderId) {
+          return `\u8BA2\u5355 ${orderId} \u65E7\u7248\u8BA2\u5355\u8BE6\u60C5\u89E6\u53D1\u9A8C\u8BC1\uFF0C\u672C\u5355\u7269\u6D41\u7559\u7A7A`;
+        },
+        skipStatus(orderId, status) {
+          return `\u8BA2\u5355 ${orderId} \u72B6\u6001\u4E3A\u300C${status}\u300D\uFF0C\u4E0D\u5728\u6240\u9009\u72B6\u6001\u4E2D\uFF0C\u5DF2\u8DF3\u8FC7`;
+        },
+        statusFilter(labels) {
+          return `\u5BFC\u51FA\u6240\u9009\u72B6\u6001\uFF1A${labels}`;
+        },
         logisticsWithTrace(orderId, company, trackingNo, latest) {
           return `\u8BA2\u5355 ${orderId} \u7269\u6D41\uFF1A${company} ${trackingNo} ${latest}`;
         },
@@ -208,6 +220,30 @@
     }
   });
 
+  // src/order-status.js
+  var require_order_status = __commonJS({
+    "src/order-status.js"(exports, module) {
+      var STATUS_FILTERS = [
+        { id: "wait-pay", label: "\u5F85\u4ED8\u6B3E", keywords: ["\u7B49\u5F85\u4E70\u5BB6\u4ED8\u6B3E", "\u5F85\u4ED8\u6B3E"] },
+        { id: "wait-send", label: "\u5F85\u53D1\u8D27", keywords: ["\u7B49\u5F85\u5356\u5BB6\u53D1\u8D27", "\u5F85\u53D1\u8D27", "\u4E70\u5BB6\u5DF2\u4ED8\u6B3E"] },
+        { id: "wait-receive", label: "\u5F85\u6536\u8D27", keywords: ["\u5356\u5BB6\u5DF2\u53D1\u8D27", "\u5F85\u6536\u8D27", "\u5DF2\u53D1\u8D27", "\u90E8\u5206\u53D1\u8D27"] },
+        { id: "success", label: "\u4EA4\u6613\u6210\u529F", keywords: ["\u4EA4\u6613\u6210\u529F"] },
+        { id: "closed", label: "\u4EA4\u6613\u5173\u95ED", keywords: ["\u4EA4\u6613\u5173\u95ED"] },
+        { id: "refund", label: "\u9000\u6B3E", keywords: ["\u9000\u6B3E"] }
+      ];
+      function statusLabel(id) {
+        const found = STATUS_FILTERS.find((item) => item.id === id);
+        return found ? found.label : id;
+      }
+      function matchesStatus(statusText, selectedIds) {
+        if (!Array.isArray(selectedIds) || selectedIds.includes("all")) return true;
+        const text = statusText == null ? "" : String(statusText);
+        return STATUS_FILTERS.some((item) => selectedIds.includes(item.id) && item.keywords.some((word) => text.includes(word)));
+      }
+      module.exports = { STATUS_FILTERS, matchesStatus, statusLabel };
+    }
+  });
+
   // src/parse-orders.js
   var require_parse_orders = __commonJS({
     "src/parse-orders.js"(exports, module) {
@@ -220,6 +256,21 @@
       function textOf(value) {
         if (value == null) return "";
         return String(value);
+      }
+      function formatSku(value) {
+        if (value == null || value === "") return "";
+        if (typeof value === "string" || typeof value === "number") return String(value);
+        if (Array.isArray(value)) return value.map(formatSku).filter(Boolean).join(" ");
+        if (typeof value === "object") {
+          const name = value.name || value.propName || value.text;
+          const content = value.value || value.content || value.desc;
+          if (name != null && content != null && typeof content !== "object") {
+            return `${formatSku(name)}: ${formatSku(content)}`;
+          }
+          if (content != null && typeof content !== "object") return formatSku(content);
+          return Object.values(value).map(formatSku).filter(Boolean).join(" ");
+        }
+        return "";
       }
       function blank(orderId, fieldName, logs) {
         logs.push({ level: "warn", message: messages2.missingField(orderId, fieldName) });
@@ -253,7 +304,7 @@
               price = blank(orderId, "\u5355\u4EF7", logs);
             } else {
               title = sub.itemInfo ? textOf(sub.itemInfo.title) : "";
-              sku = sub.itemInfo ? textOf(sub.itemInfo.skuText) : "";
+              sku = sub.itemInfo ? formatSku(sub.itemInfo.skuText) : "";
               quantity = textOf(sub.quantity);
               const priceInfo = sub.priceInfo || {};
               if (priceInfo.price != null && priceInfo.price !== "") {
@@ -360,6 +411,87 @@
     }
   });
 
+  // src/parse-legacy-logistics.js
+  var require_parse_legacy_logistics = __commonJS({
+    "src/parse-legacy-logistics.js"(exports, module) {
+      var { parseLogisticsBody } = require_parse_logistics();
+      function decodeEntities(text) {
+        return text.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+      }
+      function valueOnLine(line, label) {
+        const at = line.indexOf(label);
+        if (at < 0) return "";
+        return line.slice(at + label.length).replace(/^[：:\s]+/, "").split(/\s/)[0] || "";
+      }
+      function textAfterLabel(html, labels) {
+        const lines = plainText(html).split("\n").map((line) => line.trim()).filter(Boolean);
+        for (const label of labels) {
+          for (let index = 0; index < lines.length; index += 1) {
+            if (!lines[index].includes(label)) continue;
+            const inline = valueOnLine(lines[index], label);
+            if (inline) return inline;
+            const next = lines[index + 1];
+            if (next && !/公司|运单|单号|地址|方式|留言/.test(next)) return next;
+          }
+        }
+        return "";
+      }
+      function plainText(html) {
+        return decodeEntities(html.replace(/<script[\s\S]*?<\/script>/gi, "\n").replace(/<style[\s\S]*?<\/style>/gi, "\n").replace(/<[^>]+>/g, "\n"));
+      }
+      function collectTraces(html) {
+        const lines = plainText(html).split(/\n/).map((line) => line.trim()).filter(Boolean);
+        const items = [];
+        for (let index = 0; index < lines.length; index += 1) {
+          const match = lines[index].match(/^(20\d{2}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\s+(.*))?$/);
+          if (!match) continue;
+          let desc = (match[2] || "").trim();
+          const next = lines[index + 1];
+          if (!desc && next && !/^20\d{2}-\d{2}-\d{2}/.test(next)) desc = next;
+          if (desc && !["\u5B9D\u8D1D", "\u72B6\u6001", "\u5355\u4EF7", "\u6570\u91CF", "\u4F18\u60E0", "\u8FD0\u8D39"].includes(desc)) {
+            items.push({ time: match[1].replace("T", " "), desc });
+          }
+        }
+        return items;
+      }
+      function parseLegacyLogistics2(text) {
+        const body = text == null ? "" : String(text).trim();
+        if (body.startsWith("{") || body.startsWith("[")) {
+          try {
+            return parseLogisticsBody(JSON.parse(body));
+          } catch {
+            return { ok: false, reason: "\u65E7\u7248\u7269\u6D41\u9875\u4E0D\u662F\u6709\u6548\u6570\u636E" };
+          }
+        }
+        const company = textAfterLabel(body, ["\u7269\u6D41\u516C\u53F8", "\u627F\u8FD0\u516C\u53F8", "\u5FEB\u9012\u516C\u53F8"]);
+        const trackingNo = textAfterLabel(body, ["\u8FD0\u5355\u53F7\u7801", "\u8FD0\u5355\u53F7", "\u5FEB\u9012\u5355\u53F7"]);
+        const traces = collectTraces(body);
+        let latest = "";
+        let bestTime = "";
+        for (const item of traces) {
+          if (!latest || item.time >= bestTime) {
+            latest = item.desc;
+            bestTime = item.time;
+          }
+        }
+        const cleanCompany = company === "\u2014" || company === "-" ? "" : company;
+        const cleanTracking = trackingNo === "\u2014" || trackingNo === "-" ? "" : trackingNo;
+        if (!cleanCompany && !cleanTracking) {
+          return { ok: false, reason: "\u65E7\u7248\u7269\u6D41\u9875\u65E0\u7269\u6D41\u4FE1\u606F" };
+        }
+        return {
+          ok: true,
+          company: cleanCompany,
+          trackingNo: cleanTracking,
+          latest,
+          packageCount: 1,
+          hasTrace: latest !== ""
+        };
+      }
+      module.exports = { parseLegacyLogistics: parseLegacyLogistics2 };
+    }
+  });
+
   // src/classify-response.js
   var require_classify_response = __commonJS({
     "src/classify-response.js"(exports, module) {
@@ -394,8 +526,10 @@
       var { messages: messages2 } = require_messages();
       var { createLogger: createLogger2 } = require_logger();
       var { classifyTime } = require_dates();
+      var { matchesStatus, statusLabel } = require_order_status();
       var { needsLogistics, buildRows: buildRows2 } = require_parse_orders();
       var { parseLogisticsBody } = require_parse_logistics();
+      var { parseLegacyLogistics: parseLegacyLogistics2 } = require_parse_legacy_logistics();
       var { classifyListResponse } = require_classify_response();
       var PAGE_SIZE = 15;
       var LOGISTICS_GAP_MS = 400;
@@ -413,6 +547,9 @@
           logText: logger.text()
         };
       }
+      function looksLikeLogisticsPage(body) {
+        return body.includes("\u7269\u6D41\u516C\u53F8") || body.includes("\u8FD0\u5355\u53F7") || body.includes("\u8FD0\u5355\u53F7\u7801") || body.includes("\u5FEB\u9012\u5355\u53F7") || body.includes("expressName");
+      }
       function isLogisticsRisk(text) {
         const body = text == null ? "" : String(text);
         let json = null;
@@ -422,7 +559,11 @@
           json = null;
         }
         if (json && parseLogisticsBody(json).ok) return false;
-        return body.includes("\u9A8C\u8BC1\u7801") || body.includes("_____tmd_____") || body.includes("x5secdata") || body.includes("punish") || body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE") || !!(json && (json.url || json.rgv587_flag));
+        if (!json && looksLikeLogisticsPage(body)) return false;
+        if (json) {
+          return body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE") || !!(json.url || json.rgv587_flag);
+        }
+        return body.includes("_____tmd_____") || body.includes("x5secdata") || body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE");
       }
       async function readPage(fetchPage2, pageNum) {
         try {
@@ -448,6 +589,64 @@
         push(logger, onLog, "error", message);
         if (kept.length > 0) return resultOf("partial-ready", [], logger, kept.length, kept, {});
         return resultOf("stopped", [], logger, 0, [], {});
+      }
+      function usableLogistics(parsed) {
+        return !!(parsed && parsed.ok && (parsed.company || parsed.trackingNo));
+      }
+      function readLogisticsResponse(response, networkReason) {
+        if (!response) return { risk: false, parsed: null, reason: networkReason };
+        if (isLogisticsRisk(response.text)) return { risk: true, parsed: null, reason: "" };
+        if (response.ok === false) {
+          const statusCode = response.status ? response.status : 0;
+          return { risk: false, parsed: null, reason: `HTTP ${statusCode}` };
+        }
+        let json;
+        try {
+          json = JSON.parse(response.text);
+        } catch {
+          return { risk: false, parsed: null, reason: "\u54CD\u5E94\u4E0D\u662F JSON" };
+        }
+        const parsed = parseLogisticsBody(json);
+        if (parsed.ok && !parsed.company && !parsed.trackingNo) {
+          return { risk: false, parsed: null, empty: true, reason: "\u65E0\u7269\u6D41\u4FE1\u606F" };
+        }
+        if (!parsed.ok) return { risk: false, parsed: null, reason: parsed.reason };
+        return { risk: false, parsed, reason: "" };
+      }
+      function recordLogistics(orderId, parsed, logisticsById, logger, onLog) {
+        if (parsed.packageCount > 1) {
+          push(logger, onLog, "info", messages2.multiPackage(orderId, parsed.packageCount));
+        }
+        logisticsById[orderId] = {
+          company: parsed.company,
+          trackingNo: parsed.trackingNo,
+          latest: parsed.latest
+        };
+        if (!parsed.hasTrace) {
+          push(logger, onLog, "info", messages2.logisticsNoTrace(orderId, parsed.company, parsed.trackingNo));
+        } else {
+          push(logger, onLog, "info", messages2.logisticsWithTrace(orderId, parsed.company, parsed.trackingNo, parsed.latest));
+        }
+      }
+      async function readLegacyLogistics(orderId, input, logger, onLog) {
+        push(logger, onLog, "info", messages2.legacyLogistics(orderId));
+        await input.sleep(LOGISTICS_GAP_MS);
+        const stop = input.shouldStop();
+        if (stop) return { stopped: stop };
+        let response;
+        try {
+          response = await input.fetchLegacyLogistics(orderId);
+        } catch {
+          return { reason: "\u65E7\u7248\u7269\u6D41\u9875\u7F51\u7EDC\u9519\u8BEF" };
+        }
+        if (response && isLogisticsRisk(response.text)) return { risk: true };
+        if (!response || response.ok === false) {
+          const statusCode = response && response.status ? response.status : 0;
+          return { reason: `\u65E7\u7248\u7269\u6D41\u9875 HTTP ${statusCode}` };
+        }
+        const parsed = parseLegacyLogistics2(response.text);
+        if (!usableLogistics(parsed)) return { reason: parsed.reason || "\u65E7\u7248\u7269\u6D41\u9875\u65E0\u7269\u6D41\u4FE1\u606F" };
+        return { parsed };
       }
       async function queryLogistics(kept, input, logger, onLog, onProgress) {
         const logisticsById = {};
@@ -475,48 +674,33 @@
           try {
             response = await input.fetchLogistics(orderId);
           } catch {
+            response = null;
+          }
+          const current = readLogisticsResponse(response, "\u7F51\u7EDC\u9519\u8BEF");
+          if (current.risk) return { stopped: null, risk: true, logisticsById, failCount };
+          let parsed = usableLogistics(current.parsed) ? current.parsed : null;
+          if (!parsed && typeof input.fetchLegacyLogistics === "function") {
+            const legacy = await readLegacyLogistics(orderId, input, logger, onLog);
+            if (legacy.stopped) return { stopped: legacy.stopped, logisticsById, failCount };
+            if (legacy.risk) {
+              push(logger, onLog, "warn", messages2.legacyBlocked(orderId));
+              current.reason = "\u65E7\u7248\u8BA2\u5355\u8BE6\u60C5\u89E6\u53D1\u9A8C\u8BC1";
+            } else if (usableLogistics(legacy.parsed)) {
+              parsed = legacy.parsed;
+            } else {
+              current.reason = legacy.reason || current.reason;
+            }
+          }
+          if (!parsed) {
+            if (current.empty && typeof input.fetchLegacyLogistics !== "function") {
+              push(logger, onLog, "info", messages2.noLogisticsInfo(orderId));
+              continue;
+            }
             failCount += 1;
-            push(logger, onLog, "warn", messages2.logisticsFail(orderId, "\u7F51\u7EDC\u9519\u8BEF"));
+            push(logger, onLog, "warn", messages2.logisticsFail(orderId, current.reason || "\u65E0\u7269\u6D41\u4FE1\u606F"));
             continue;
           }
-          if (response && isLogisticsRisk(response.text)) {
-            return { stopped: null, risk: true, logisticsById, failCount };
-          }
-          if (!response || response.ok === false) {
-            failCount += 1;
-            const statusCode = response && response.status ? response.status : 0;
-            push(logger, onLog, "warn", messages2.logisticsFail(orderId, `HTTP ${statusCode}`));
-            continue;
-          }
-          let json;
-          try {
-            json = JSON.parse(response.text);
-          } catch {
-            failCount += 1;
-            push(logger, onLog, "warn", messages2.logisticsFail(orderId, "\u54CD\u5E94\u4E0D\u662F JSON"));
-            continue;
-          }
-          const parsed = parseLogisticsBody(json);
-          if (!parsed.ok) {
-            failCount += 1;
-            push(logger, onLog, "warn", messages2.logisticsFail(orderId, parsed.reason));
-            continue;
-          }
-          if (parsed.packageCount > 1) {
-            push(logger, onLog, "info", messages2.multiPackage(orderId, parsed.packageCount));
-          }
-          logisticsById[orderId] = {
-            company: parsed.company,
-            trackingNo: parsed.trackingNo,
-            latest: parsed.latest
-          };
-          if (!parsed.company && !parsed.trackingNo) {
-            push(logger, onLog, "info", messages2.noLogisticsInfo(orderId));
-          } else if (!parsed.hasTrace) {
-            push(logger, onLog, "info", messages2.logisticsNoTrace(orderId, parsed.company, parsed.trackingNo));
-          } else {
-            push(logger, onLog, "info", messages2.logisticsWithTrace(orderId, parsed.company, parsed.trackingNo, parsed.latest));
-          }
+          recordLogistics(orderId, parsed, logisticsById, logger, onLog);
         }
         return { stopped: null, risk: false, logisticsById, failCount };
       }
@@ -531,6 +715,10 @@
           return resultOf("stopped", [], logger, 0, [], {});
         }
         push(logger, onLog, "info", messages2.start(input.startDate, input.endDate, input.format));
+        if (Array.isArray(input.statuses) && !input.statuses.includes("all")) {
+          const labels = input.statuses.map(statusLabel).join("\u3001");
+          push(logger, onLog, "info", messages2.statusFilter(labels));
+        }
         const kept = [];
         let pageNum = 1;
         let stopPaging = false;
@@ -574,6 +762,11 @@
               break;
             }
             inRange += 1;
+            const status = order.statusInfo ? order.statusInfo.text : "";
+            if (!matchesStatus(status, input.statuses)) {
+              push(logger, onLog, "info", messages2.skipStatus(orderId, status));
+              continue;
+            }
             kept.push(order);
           }
           push(logger, onLog, "info", messages2.pageOk(pageNum, orders.length, inRange));
@@ -33972,6 +34165,7 @@
   var { createLogger } = require_logger();
   var { messages } = require_messages();
   var { decodeResponseBytes } = require_decode();
+  var { parseLegacyLogistics } = require_parse_legacy_logistics();
   var { encodeLogText } = require_log_file();
   var { exportTable } = require_export_table();
   var { tableFilename, logFilename } = require_filenames();
@@ -34018,6 +34212,45 @@
       status: response.status,
       text: decodeResponseBytes(bytes, response.headers.get("content-type"))
     };
+  }
+  function detailPageUrls(orderId) {
+    const id = encodeURIComponent(orderId);
+    return [
+      `https://trade.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
+      `https://buyertrade.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
+      `https://tradearchive.taobao.com/trade/detail/trade_item_detail.htm?biz_order_id=${id}`,
+      `https://tradearchive.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`
+    ];
+  }
+  async function requestLegacyPage(url) {
+    const response = await chrome.runtime.sendMessage({
+      type: "fetch-legacy-logistics",
+      url
+    });
+    if (!response) return { ok: false, status: 0, text: "" };
+    const bytes = new Uint8Array(response.bytes || []);
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: decodeResponseBytes(bytes, response.contentType)
+    };
+  }
+  function pageHasWaybill(text) {
+    const parsed = parseLegacyLogistics(text);
+    return !!(parsed.ok && (parsed.company || parsed.trackingNo));
+  }
+  async function fetchLegacyLogistics(orderId) {
+    const urls = detailPageUrls(orderId);
+    let last = { ok: false, status: 0, text: "" };
+    for (const url of urls) {
+      const page = await requestLegacyPage(url);
+      last = page;
+      const text = page.text || "";
+      const blocked = text.includes("_____tmd_____") || text.includes("x5secdata") || text.includes("rgv587_flag");
+      if (blocked && !text.includes("\u7269\u6D41\u516C\u53F8") && !text.includes("\u8FD0\u5355\u53F7")) continue;
+      if (page.ok && pageHasWaybill(text)) return page;
+    }
+    return last;
   }
   async function fetchLogistics(orderId) {
     const response = await fetch(logisticsUrl(orderId), { credentials: "include" });
@@ -34102,8 +34335,10 @@
           startDate: message.startDate,
           endDate: message.endDate,
           format: message.format,
+          statuses: message.statuses,
           fetchPage,
           fetchLogistics,
+          fetchLegacyLogistics,
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           shouldStop: () => stopKind,
           now: () => /* @__PURE__ */ new Date(),

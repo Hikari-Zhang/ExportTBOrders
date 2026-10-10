@@ -53,6 +53,18 @@ const messages = {
   queryingLogistics(index, total, orderId) {
     return `正在查询物流 ${index}/${total}，订单 ${orderId}`;
   },
+  legacyLogistics(orderId) {
+    return `订单 ${orderId} 新接口无物流，改查旧版订单详情`;
+  },
+  legacyBlocked(orderId) {
+    return `订单 ${orderId} 旧版订单详情触发验证，本单物流留空`;
+  },
+  skipStatus(orderId, status) {
+    return `订单 ${orderId} 状态为「${status}」，不在所选状态中，已跳过`;
+  },
+  statusFilter(labels) {
+    return `导出所选状态：${labels}`;
+  },
   logisticsWithTrace(orderId, company, trackingNo, latest) {
     return `订单 ${orderId} 物流：${company} ${trackingNo} ${latest}`;
   },

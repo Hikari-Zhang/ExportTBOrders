@@ -30,6 +30,19 @@ test('日期颠倒时按钮不可用', () => {
   assert.equal(view.exportLabel, '开始导出');
 });
 
+test('没有选择订单状态时按钮不可用', () => {
+  const view = popupView({
+    url: orderUrl,
+    running: false,
+    startDate: '2026-07-09',
+    endDate: '2026-10-09',
+    statuses: [],
+    result: null,
+  });
+  assert.equal(view.statusError, true);
+  assert.equal(view.exportDisabled, true);
+});
+
 test('导出中按钮变成取消，结束后可导出已获取的部分', () => {
   const running = popupView({
     url: orderUrl,

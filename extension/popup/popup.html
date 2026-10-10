@@ -13,6 +13,16 @@
   <label>结束日期 <input id="end-date" type="date"></label>
   <p id="date-error" hidden>开始日期不能晚于结束日期</p>
   <fieldset>
+    <legend>订单状态</legend>
+    <label><input name="status" type="checkbox" value="wait-pay" checked> 待付款</label>
+    <label><input name="status" type="checkbox" value="wait-send" checked> 待发货</label>
+    <label><input name="status" type="checkbox" value="wait-receive" checked> 待收货</label>
+    <label><input name="status" type="checkbox" value="success" checked> 交易成功</label>
+    <label><input name="status" type="checkbox" value="closed" checked> 交易关闭</label>
+    <label><input name="status" type="checkbox" value="refund" checked> 退款</label>
+  </fieldset>
+  <p id="status-error" hidden>请至少选择一种订单状态</p>
+  <fieldset>
     <legend>格式</legend>
     <label><input name="format" type="radio" value="xlsx" checked> Excel</label>
     <label><input name="format" type="radio" value="csv"> CSV</label>

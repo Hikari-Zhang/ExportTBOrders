@@ -21,6 +21,10 @@ test('每条日志文案与设计说明一致', () => {
   assert.equal(messages.usedSubtotal('100'), '订单 100 缺少单价，该列使用商品小计');
   assert.equal(messages.skipLogistics('100', '待发货'), '订单 100 状态为「待发货」，未发货，跳过物流查询');
   assert.equal(messages.queryingLogistics(1, 4, '100'), '正在查询物流 1/4，订单 100');
+  assert.equal(messages.legacyLogistics('100'), '订单 100 新接口无物流，改查旧版订单详情');
+  assert.equal(messages.legacyBlocked('100'), '订单 100 旧版订单详情触发验证，本单物流留空');
+  assert.equal(messages.skipStatus('100', '交易成功'), '订单 100 状态为「交易成功」，不在所选状态中，已跳过');
+  assert.equal(messages.statusFilter('待付款、交易成功'), '导出所选状态：待付款、交易成功');
   assert.equal(messages.logisticsWithTrace('100', '中通', 'ZT1', '已签收'), '订单 100 物流：中通 ZT1 已签收');
   assert.equal(messages.logisticsNoTrace('100', '中通', 'ZT1'), '订单 100 物流：中通 ZT1，无轨迹');
   assert.equal(messages.noLogisticsInfo('100'), '订单 100 无物流信息');
