@@ -1,0 +1,7 @@
+{
+  "name": "export-tb-orders",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
