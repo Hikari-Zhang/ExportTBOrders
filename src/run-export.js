@@ -138,6 +138,7 @@ async function runExport(input) {
     const stop = input.shouldStop();
     if (stop) return rememberStop(stop, kept, logger, onLog);
     onProgress(messages.progressPage(pageNum, kept.length));
+    push(logger, onLog, 'info', messages.readingPage(pageNum));
     let classified = await readPage(input.fetchPage, pageNum);
     if (classified.type === 'retryable') {
       push(logger, onLog, 'warn', messages.pageRetry(pageNum, classified.reason));
@@ -155,7 +156,6 @@ async function runExport(input) {
     if (classified.type === 'unrecognized') {
       return stopWith('unknown', messages.unrecognized(classified.keys), kept, logger, onLog);
     }
-    push(logger, onLog, 'info', messages.readingPage(pageNum));
     const orders = classified.orders;
     let inRange = 0;
     for (const order of orders) {

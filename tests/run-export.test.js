@@ -159,7 +159,12 @@ test('未登录、验证码、无法识别都停止', async () => {
 
   const captcha = harness({ 1: { ok: true, status: 200, text: JSON.stringify({ url: 'https://sec.taobao.com' }) } }, {});
   assert.equal((await runExport(captcha.input)).status, 'stopped');
-  assert.ok(messagesOf(captcha.logs)[1].includes('触发验证码或风控'));
+  const captchaTexts = messagesOf(captcha.logs);
+  const readingIdx = captchaTexts.findIndex((line) => line.includes('正在读取第 1 页'));
+  const captchaIdx = captchaTexts.findIndex((line) => line.includes('触发验证码或风控'));
+  assert.ok(readingIdx >= 0);
+  assert.ok(captchaIdx >= 0);
+  assert.ok(readingIdx < captchaIdx);
 
   const unknown = harness({ 1: { ok: true, status: 200, text: JSON.stringify({ foo: 1 }) } }, {});
   const unknownResult = await runExport(unknown.input);
