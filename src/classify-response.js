@@ -9,6 +9,9 @@ function classifyListResponse(text) {
   if (json && Array.isArray(json.mainOrders)) {
     return { type: 'orders', orders: json.mainOrders };
   }
+  if (body.includes('login.taobao.com') || body.includes('passport.taobao.com')) {
+    return { type: 'login' };
+  }
   if (
     body.includes('验证码')
     || body.includes('_____tmd_____')
@@ -19,9 +22,6 @@ function classifyListResponse(text) {
     || (json && (json.url || json.rgv587_flag))
   ) {
     return { type: 'captcha' };
-  }
-  if (body.includes('login.taobao.com') || body.includes('passport.taobao.com')) {
-    return { type: 'login' };
   }
   if (!json) return { type: 'retryable', reason: '响应不是 JSON' };
   const keys = json && typeof json === 'object' && !Array.isArray(json)

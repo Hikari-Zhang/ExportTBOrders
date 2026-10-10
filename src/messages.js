@@ -86,6 +86,12 @@ const messages = {
   popupClosed() {
     return '弹窗已关闭，导出已取消';
   },
+  portClosed() {
+    return '订单页连接已断开，请刷新订单页后重试。已停止';
+  },
+  exportFailed(reason) {
+    return `表格生成失败，已停止。原因：${reason}`;
+  },
   partialExported(orderCount, rowCount, filename) {
     return `已导出已获取的部分。订单 ${orderCount} 笔，商品 ${rowCount} 行，文件 ${filename}`;
   },

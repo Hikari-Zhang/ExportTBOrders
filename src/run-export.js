@@ -24,6 +24,24 @@ function resultOf(status, rows, logger, orderCount, keptOrders, logisticsById) {
   };
 }
 
+function isLogisticsRisk(text) {
+  const body = text == null ? '' : String(text);
+  let json = null;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    json = null;
+  }
+  if (json && parseLogisticsBody(json).ok) return false;
+  return body.includes('验证码')
+    || body.includes('_____tmd_____')
+    || body.includes('x5secdata')
+    || body.includes('punish')
+    || body.includes('rgv587_flag')
+    || body.includes('FAIL_SYS_USER_VALIDATE')
+    || !!(json && (json.url || json.rgv587_flag));
+}
+
 async function readPage(fetchPage, pageNum) {
   try {
     const response = await fetchPage(pageNum);
@@ -82,6 +100,9 @@ async function queryLogistics(kept, input, logger, onLog, onProgress) {
       push(logger, onLog, 'warn', messages.logisticsFail(orderId, '网络错误'));
       continue;
     }
+    if (response && isLogisticsRisk(response.text)) {
+      return { stopped: null, risk: true, logisticsById, failCount };
+    }
     if (!response || response.ok === false) {
       failCount += 1;
       const statusCode = response && response.status ? response.status : 0;
@@ -118,7 +139,7 @@ async function queryLogistics(kept, input, logger, onLog, onProgress) {
       push(logger, onLog, 'info', messages.logisticsWithTrace(orderId, parsed.company, parsed.trackingNo, parsed.latest));
     }
   }
-  return { stopped: null, logisticsById, failCount };
+  return { stopped: null, risk: false, logisticsById, failCount };
 }
 
 async function runExport(input) {
@@ -191,6 +212,13 @@ async function runExport(input) {
   }
 
   const queried = await queryLogistics(kept, input, logger, onLog, onProgress);
+  if (queried.risk) {
+    push(logger, onLog, 'error', messages.captcha(kept.length));
+    if (kept.length > 0) {
+      return resultOf('partial-ready', [], logger, kept.length, kept, queried.logisticsById);
+    }
+    return resultOf('stopped', [], logger, 0, [], {});
+  }
   if (queried.stopped) return rememberStop(queried.stopped, kept, logger, onLog);
   const stopBeforeComplete = input.shouldStop();
   if (stopBeforeComplete) return rememberStop(stopBeforeComplete, kept, logger, onLog);

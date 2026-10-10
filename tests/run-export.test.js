@@ -231,10 +231,25 @@ test('取消时停止且不继续请求', async () => {
 });
 
 test('弹窗关闭使用单独文案', async () => {
+  let logisticsCalls = 0;
   const h = harness({}, {});
-  h.input.shouldStop = () => 'popup-closed';
+  h.input.fetchPage = async () => {
+    h.setStop(() => 'popup-closed');
+    return {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [order('only', '2026-10-01 10:00:00', '待发货', '商品')],
+      }),
+    };
+  };
+  h.input.fetchLogistics = async () => {
+    logisticsCalls += 1;
+    return { ok: true, status: 200, text: '{}' };
+  };
   const result = await runExport(h.input);
   assert.equal(result.status, 'cancelled');
+  assert.equal(logisticsCalls, 0);
   assert.ok(messagesOf(h.logs).includes('弹窗已关闭，导出已取消'));
 });
 
@@ -253,21 +268,100 @@ test('第一页失败重试前已取消则不再请求', async () => {
 });
 
 test('物流阶段开始前取消则不为 complete', async () => {
-  const pages = {
-    1: {
+  let logisticsCalls = 0;
+  const h = harness({}, {});
+  h.input.fetchPage = async () => {
+    h.setStop(() => 'cancel');
+    return {
       ok: true,
       status: 200,
       text: JSON.stringify({
         mainOrders: [order('only', '2026-10-01 10:00:00', '待发货', '商品')],
       }),
+    };
+  };
+  h.input.fetchLogistics = async () => {
+    logisticsCalls += 1;
+    return { ok: true, status: 200, text: '{}' };
+  };
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(logisticsCalls, 0);
+  assert.ok(messagesOf(h.logs).some((line) => line.includes('已取消')));
+});
+
+test('物流风控立刻停止，不再请求后续订单', async () => {
+  const calls = [];
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          order('shipped-1', '2026-10-01 10:00:00', '交易成功', '甲'),
+          order('shipped-2', '2026-10-01 11:00:00', '交易成功', '乙'),
+        ],
+      }),
     },
   };
   const h = harness(pages, {});
-  h.setStop(() => 'cancel');
+  h.input.fetchLogistics = async (orderId) => {
+    calls.push(orderId);
+    if (orderId === 'shipped-1') {
+      return { ok: true, status: 200, text: JSON.stringify({ rgv587_flag: 'sm' }) };
+    }
+    throw new Error('should not request later order');
+  };
   const result = await runExport(h.input);
-  assert.equal(result.status, 'cancelled');
-  assert.notEqual(result.status, 'complete');
-  assert.ok(messagesOf(h.logs).some((line) => line.includes('已取消')));
+  assert.equal(result.status, 'partial-ready');
+  assert.deepEqual(calls, ['shipped-1']);
+  assert.equal(result.orderCount, 2);
+  assert.deepEqual(result.logisticsById, {});
+  assert.equal(result.keptOrders.length, 2);
+  assert.ok(messagesOf(h.logs).some((line) => line.includes('触发验证码或风控')));
+});
+
+test('物流风控停止时保留已查到的物流', async () => {
+  const calls = [];
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          order('ok-1', '2026-10-01 10:00:00', '交易成功', '甲'),
+          order('risk-2', '2026-10-01 11:00:00', '交易成功', '乙'),
+          order('later-3', '2026-10-01 12:00:00', '交易成功', '丙'),
+        ],
+      }),
+    },
+  };
+  const h = harness(pages, {});
+  h.input.fetchLogistics = async (orderId) => {
+    calls.push(orderId);
+    if (orderId === 'ok-1') {
+      return {
+        ok: true,
+        status: 200,
+        text: JSON.stringify({
+          isSuccess: 'true',
+          expressName: '中通',
+          expressId: 'ZT1',
+          address: [{ time: '2026-10-02 00:00:00', place: '已签收' }],
+        }),
+      };
+    }
+    if (orderId === 'risk-2') {
+      return { ok: true, status: 200, text: JSON.stringify({ rgv587_flag: 'sm' }) };
+    }
+    throw new Error('should not request later order');
+  };
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'partial-ready');
+  assert.deepEqual(calls, ['ok-1', 'risk-2']);
+  assert.deepEqual(result.logisticsById, {
+    'ok-1': { company: '中通', trackingNo: 'ZT1', latest: '已签收' },
+  });
 });
 
 test('开始日期晚于结束日期时不发请求', async () => {

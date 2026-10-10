@@ -2,7 +2,8 @@ const { defaultRange } = require('./dates');
 const { popupView } = require('./popup-state');
 const { createLogger } = require('./logger');
 const { messages } = require('./messages');
-const { exportTable, encodeLogText } = require('./export-table');
+const { exportTable } = require('./export-table');
+const { encodeLogText } = require('./log-file');
 const { tableFilename, logFilename } = require('./filenames');
 const { buildRows } = require('./parse-orders');
 
@@ -24,6 +25,10 @@ let port = null;
 let running = false;
 let starting = false;
 let lastResult = null;
+let resultReceived = false;
+let savedStartDate = '';
+let savedEndDate = '';
+let savedFormat = 'xlsx';
 let tabUrl = '';
 const logger = createLogger(() => new Date());
 
@@ -57,7 +62,7 @@ function download(filename, bytes, mime) {
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function addLog(level, message) {
@@ -109,7 +114,12 @@ exportButton.addEventListener('click', async () => {
   }
   logger.lines.length = 0;
   lastResult = null;
+  resultReceived = false;
+  savedStartDate = startInput.value;
+  savedEndDate = endInput.value;
+  savedFormat = selectedFormat();
   port = chrome.tabs.connect(tab.id, { name: 'tb-order-export' });
+  const activePort = port;
   port.onMessage.addListener((message) => {
     if (message.type === 'log') {
       logger.lines.push(message.line);
@@ -117,35 +127,49 @@ exportButton.addEventListener('click', async () => {
     } else if (message.type === 'progress') {
       progress.textContent = message.text;
     } else if (message.type === 'result') {
+      resultReceived = true;
       running = false;
       lastResult = message.result;
       progress.textContent = '';
-      if (message.result.status === 'complete') {
-        const filename = tableFilename(startInput.value, endInput.value, selectedFormat(), false);
-        const file = exportTable(message.result.rows, selectedFormat());
-        download(filename, file.bytes, file.mime);
-        const logName = logFilename(new Date());
-        addLog('info', messages.downloadedTable(filename));
-        addLog('info', messages.downloadedLog(logName));
-        addLog('info', messages.done());
-        download(logName, encodeLogText(logger.text()), 'text/plain;charset=utf-8');
-      } else {
+      try {
+        if (message.result.status === 'complete') {
+          const filename = tableFilename(savedStartDate, savedEndDate, savedFormat, false);
+          const file = exportTable(message.result.rows, savedFormat);
+          download(filename, file.bytes, file.mime);
+          const logName = logFilename(new Date());
+          addLog('info', messages.downloadedTable(filename));
+          addLog('info', messages.downloadedLog(logName));
+          addLog('info', messages.done());
+          download(logName, encodeLogText(logger.text()), 'text/plain;charset=utf-8');
+        } else {
+          downloadLog();
+          render();
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        addLog('error', messages.exportFailed(reason));
         downloadLog();
-        render();
       }
     }
   });
   port.onDisconnect.addListener(() => {
+    if (port !== activePort) return;
     port = null;
+    if (running && !resultReceived) {
+      running = false;
+      addLog('error', messages.portClosed());
+      downloadLog();
+      render();
+    }
   });
   starting = false;
   running = true;
   render();
   port.postMessage({
     type: 'start',
-    startDate: startInput.value,
-    endDate: endInput.value,
-    format: selectedFormat(),
+    startDate: savedStartDate,
+    endDate: savedEndDate,
+    format: savedFormat,
   });
 });
 
@@ -153,8 +177,8 @@ partialButton.addEventListener('click', () => {
   if (!lastResult || lastResult.status !== 'partial-ready') return;
   const built = buildRows(lastResult.keptOrders, lastResult.logisticsById || {});
   for (const entry of built.logs) addLog(entry.level, entry.message);
-  const filename = tableFilename(startInput.value, endInput.value, selectedFormat(), true);
-  const file = exportTable(built.rows, selectedFormat());
+  const filename = tableFilename(savedStartDate, savedEndDate, savedFormat, true);
+  const file = exportTable(built.rows, savedFormat);
   download(filename, file.bytes, file.mime);
   addLog('info', messages.partialExported(lastResult.orderCount, built.rows.length, filename));
   addLog('info', messages.downloadedTable(filename));

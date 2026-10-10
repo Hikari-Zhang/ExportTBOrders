@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const XLSX = require('xlsx');
 const { COLUMNS } = require('../src/columns');
-const { exportTable, encodeLogText } = require('../src/export-table');
+const { exportTable } = require('../src/export-table');
+const { encodeLogText } = require('../src/log-file');
 
 const rows = [
   {

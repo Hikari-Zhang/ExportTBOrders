@@ -35,6 +35,10 @@ test('不是 JSON 且看不出登录或验证码时可以重试', () => {
   assert.deepEqual(classifyListResponse('<html>bad gateway</html>'), { type: 'retryable', reason: '响应不是 JSON' });
 });
 
+test('登录地址和验证码同时出现时仍是未登录', () => {
+  assert.equal(classifyListResponse('https://login.taobao.com/member/login.jhtml?redirect=1 请输入验证码').type, 'login');
+});
+
 test('商品标题里的验证码不当成风控', () => {
   const result = classifyListResponse(JSON.stringify({
     mainOrders: [{ id: '1', subOrders: [{ itemInfo: { title: '验证码识别教程' } }] }],

@@ -14,9 +14,11 @@ test('logger 按调用顺序保留全文', () => {
   const logger = createLogger(() => date);
   logger.info('导出完成');
   logger.warn('有 1 笔订单没查到物流');
+  logger.error('未登录或登录已失效，已停止');
   assert.deepEqual(logger.lines, [
     '21:05:07 [信息] 导出完成',
     '21:05:07 [警告] 有 1 笔订单没查到物流',
+    '21:05:07 [错误] 未登录或登录已失效，已停止',
   ]);
-  assert.equal(logger.text(), '21:05:07 [信息] 导出完成\n21:05:07 [警告] 有 1 笔订单没查到物流\n');
+  assert.equal(logger.text(), '21:05:07 [信息] 导出完成\n21:05:07 [警告] 有 1 笔订单没查到物流\n21:05:07 [错误] 未登录或登录已失效，已停止\n');
 });

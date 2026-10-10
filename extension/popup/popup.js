@@ -164,6 +164,12 @@
         popupClosed() {
           return "\u5F39\u7A97\u5DF2\u5173\u95ED\uFF0C\u5BFC\u51FA\u5DF2\u53D6\u6D88";
         },
+        portClosed() {
+          return "\u8BA2\u5355\u9875\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF0C\u8BF7\u5237\u65B0\u8BA2\u5355\u9875\u540E\u91CD\u8BD5\u3002\u5DF2\u505C\u6B62";
+        },
+        exportFailed(reason) {
+          return `\u8868\u683C\u751F\u6210\u5931\u8D25\uFF0C\u5DF2\u505C\u6B62\u3002\u539F\u56E0\uFF1A${reason}`;
+        },
         partialExported(orderCount, rowCount, filename) {
           return `\u5DF2\u5BFC\u51FA\u5DF2\u83B7\u53D6\u7684\u90E8\u5206\u3002\u8BA2\u5355 ${orderCount} \u7B14\uFF0C\u5546\u54C1 ${rowCount} \u884C\uFF0C\u6587\u4EF6 ${filename}`;
         },
@@ -33497,16 +33503,9 @@
     }
   });
 
-  // src/export-table.js
-  var require_export_table = __commonJS({
-    "src/export-table.js"(exports, module) {
-      var XLSX = require_xlsx();
-      var { COLUMNS } = require_columns();
-      function escapeCell(value) {
-        const text = value == null ? "" : String(value);
-        if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
-        return text;
-      }
+  // src/log-file.js
+  var require_log_file = __commonJS({
+    "src/log-file.js"(exports, module) {
       function withBom(bytes) {
         const out = new Uint8Array(3 + bytes.length);
         out[0] = 239;
@@ -33514,6 +33513,24 @@
         out[2] = 191;
         out.set(bytes, 3);
         return out;
+      }
+      function encodeLogText2(text) {
+        return withBom(new TextEncoder().encode(text));
+      }
+      module.exports = { withBom, encodeLogText: encodeLogText2 };
+    }
+  });
+
+  // src/export-table.js
+  var require_export_table = __commonJS({
+    "src/export-table.js"(exports, module) {
+      var XLSX = require_xlsx();
+      var { COLUMNS } = require_columns();
+      var { withBom } = require_log_file();
+      function escapeCell(value) {
+        const text = value == null ? "" : String(value);
+        if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+        return text;
       }
       function rowValues(row) {
         return COLUMNS.map((column) => row[column] == null ? "" : String(row[column]));
@@ -33534,10 +33551,7 @@
           bytes: new Uint8Array(buffer)
         };
       }
-      function encodeLogText2(text) {
-        return withBom(new TextEncoder().encode(text));
-      }
-      module.exports = { exportTable: exportTable2, encodeLogText: encodeLogText2 };
+      module.exports = { exportTable: exportTable2 };
     }
   });
 
@@ -33646,7 +33660,8 @@
   var { popupView } = require_popup_state();
   var { createLogger } = require_logger();
   var { messages } = require_messages();
-  var { exportTable, encodeLogText } = require_export_table();
+  var { exportTable } = require_export_table();
+  var { encodeLogText } = require_log_file();
   var { tableFilename, logFilename } = require_filenames();
   var { buildRows } = require_parse_orders();
   var pageMessage = document.getElementById("page-message");
@@ -33665,6 +33680,10 @@
   var running = false;
   var starting = false;
   var lastResult = null;
+  var resultReceived = false;
+  var savedStartDate = "";
+  var savedEndDate = "";
+  var savedFormat = "xlsx";
   var tabUrl = "";
   var logger = createLogger(() => /* @__PURE__ */ new Date());
   function selectedFormat() {
@@ -33695,7 +33714,7 @@
     link.href = url;
     link.download = filename;
     link.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1e3);
   }
   function addLog(level, message) {
     logger[level](message);
@@ -33742,7 +33761,12 @@
     }
     logger.lines.length = 0;
     lastResult = null;
+    resultReceived = false;
+    savedStartDate = startInput.value;
+    savedEndDate = endInput.value;
+    savedFormat = selectedFormat();
     port = chrome.tabs.connect(tab.id, { name: "tb-order-export" });
+    const activePort = port;
     port.onMessage.addListener((message) => {
       if (message.type === "log") {
         logger.lines.push(message.line);
@@ -33750,43 +33774,57 @@
       } else if (message.type === "progress") {
         progress.textContent = message.text;
       } else if (message.type === "result") {
+        resultReceived = true;
         running = false;
         lastResult = message.result;
         progress.textContent = "";
-        if (message.result.status === "complete") {
-          const filename = tableFilename(startInput.value, endInput.value, selectedFormat(), false);
-          const file = exportTable(message.result.rows, selectedFormat());
-          download(filename, file.bytes, file.mime);
-          const logName = logFilename(/* @__PURE__ */ new Date());
-          addLog("info", messages.downloadedTable(filename));
-          addLog("info", messages.downloadedLog(logName));
-          addLog("info", messages.done());
-          download(logName, encodeLogText(logger.text()), "text/plain;charset=utf-8");
-        } else {
+        try {
+          if (message.result.status === "complete") {
+            const filename = tableFilename(savedStartDate, savedEndDate, savedFormat, false);
+            const file = exportTable(message.result.rows, savedFormat);
+            download(filename, file.bytes, file.mime);
+            const logName = logFilename(/* @__PURE__ */ new Date());
+            addLog("info", messages.downloadedTable(filename));
+            addLog("info", messages.downloadedLog(logName));
+            addLog("info", messages.done());
+            download(logName, encodeLogText(logger.text()), "text/plain;charset=utf-8");
+          } else {
+            downloadLog();
+            render();
+          }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          addLog("error", messages.exportFailed(reason));
           downloadLog();
-          render();
         }
       }
     });
     port.onDisconnect.addListener(() => {
+      if (port !== activePort) return;
       port = null;
+      if (running && !resultReceived) {
+        running = false;
+        addLog("error", messages.portClosed());
+        downloadLog();
+        render();
+      }
     });
     starting = false;
     running = true;
     render();
     port.postMessage({
       type: "start",
-      startDate: startInput.value,
-      endDate: endInput.value,
-      format: selectedFormat()
+      startDate: savedStartDate,
+      endDate: savedEndDate,
+      format: savedFormat
     });
   });
   partialButton.addEventListener("click", () => {
     if (!lastResult || lastResult.status !== "partial-ready") return;
     const built = buildRows(lastResult.keptOrders, lastResult.logisticsById || {});
     for (const entry of built.logs) addLog(entry.level, entry.message);
-    const filename = tableFilename(startInput.value, endInput.value, selectedFormat(), true);
-    const file = exportTable(built.rows, selectedFormat());
+    const filename = tableFilename(savedStartDate, savedEndDate, savedFormat, true);
+    const file = exportTable(built.rows, savedFormat);
     download(filename, file.bytes, file.mime);
     addLog("info", messages.partialExported(lastResult.orderCount, built.rows.length, filename));
     addLog("info", messages.downloadedTable(filename));

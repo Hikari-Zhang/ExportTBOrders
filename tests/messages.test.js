@@ -32,6 +32,8 @@ test('每条日志文案与设计说明一致', () => {
   assert.equal(messages.downloadedLog('淘宝订单_导出日志_20261009_210507.txt'), '已下载日志 淘宝订单_导出日志_20261009_210507.txt');
   assert.equal(messages.cancelled(2), '已取消。已获取 2 笔订单，未继续请求');
   assert.equal(messages.popupClosed(), '弹窗已关闭，导出已取消');
+  assert.equal(messages.portClosed(), '订单页连接已断开，请刷新订单页后重试。已停止');
+  assert.equal(messages.exportFailed('写入失败'), '表格生成失败，已停止。原因：写入失败');
   assert.equal(messages.partialExported(2, 3, '淘宝订单_2026-07-09_2026-10-09_部分.xlsx'), '已导出已获取的部分。订单 2 笔，商品 3 行，文件 淘宝订单_2026-07-09_2026-10-09_部分.xlsx');
   assert.equal(messages.done(), '导出完成');
   assert.equal(messages.progressPage(2, 15), '正在读取第 2 页，已得到 15 笔订单');

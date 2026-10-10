@@ -64,6 +64,19 @@ test('packages 数组也算多个包裹', () => {
   assert.equal(parsed.latest, '派送中');
 });
 
+test('包裹空槽保留位置，公司和运单号仍然对齐', () => {
+  const parsed = parseLogisticsBody({
+    isSuccess: 'true',
+    packages: [
+      { expressName: '中通', expressId: '' },
+      { expressName: '', mailNo: 'YD2' },
+    ],
+  });
+  assert.equal(parsed.company, '中通；');
+  assert.equal(parsed.trackingNo, '；YD2');
+  assert.equal(parsed.packageCount, 2);
+});
+
 test('接口成功但没有公司和运单号', () => {
   const parsed = parseLogisticsBody({ isSuccess: 'true' });
   assert.equal(parsed.ok, true);

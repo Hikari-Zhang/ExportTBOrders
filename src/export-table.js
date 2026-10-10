@@ -1,19 +1,11 @@
 const XLSX = require('xlsx');
 const { COLUMNS } = require('./columns');
+const { withBom } = require('./log-file');
 
 function escapeCell(value) {
   const text = value == null ? '' : String(value);
   if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
   return text;
-}
-
-function withBom(bytes) {
-  const out = new Uint8Array(3 + bytes.length);
-  out[0] = 0xEF;
-  out[1] = 0xBB;
-  out[2] = 0xBF;
-  out.set(bytes, 3);
-  return out;
 }
 
 function rowValues(row) {
@@ -36,8 +28,4 @@ function exportTable(rows, format) {
   };
 }
 
-function encodeLogText(text) {
-  return withBom(new TextEncoder().encode(text));
-}
-
-module.exports = { exportTable, encodeLogText };
+module.exports = { exportTable };

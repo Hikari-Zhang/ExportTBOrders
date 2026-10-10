@@ -54,8 +54,8 @@ function parseLogisticsBody(json) {
   let companies = textList(json.expressName);
   let numbers = textList(json.expressId);
   if (packageList && packageList.length > 0) {
-    companies = packageList.map((item) => item.expressName || item.company || '').filter(Boolean);
-    numbers = packageList.map((item) => item.expressId || item.mailNo || '').filter(Boolean);
+    companies = packageList.map((item) => item.expressName || item.company || '');
+    numbers = packageList.map((item) => item.expressId || item.mailNo || '');
   }
   const packageCount = packageList && packageList.length > 0
     ? packageList.length
