@@ -59,14 +59,14 @@ async function queryLogistics(kept, input, logger, onLog, onProgress) {
   let failCount = 0;
   let waited = false;
   for (const order of kept) {
+    const stop = input.shouldStop();
+    if (stop) return { stopped: stop, logisticsById, failCount };
     const orderId = order.id == null ? '' : String(order.id);
     const status = order.statusInfo ? order.statusInfo.text : '';
     if (!needsLogistics(status)) {
       push(logger, onLog, 'info', messages.skipLogistics(orderId, status));
       continue;
     }
-    const stop = input.shouldStop();
-    if (stop) return { stopped: stop, logisticsById, failCount };
     index += 1;
     onProgress(messages.progressLogistics(index, targets.length));
     push(logger, onLog, 'info', messages.queryingLogistics(index, targets.length, orderId));
@@ -142,6 +142,8 @@ async function runExport(input) {
     let classified = await readPage(input.fetchPage, pageNum);
     if (classified.type === 'retryable') {
       push(logger, onLog, 'warn', messages.pageRetry(pageNum, classified.reason));
+      const stopBeforeRetry = input.shouldStop();
+      if (stopBeforeRetry) return rememberStop(stopBeforeRetry, kept, logger, onLog);
       classified = await readPage(input.fetchPage, pageNum);
       if (classified.type === 'retryable') {
         return stopWith('page', messages.pageFail(pageNum, classified.reason, kept.length), kept, logger, onLog);
@@ -190,6 +192,8 @@ async function runExport(input) {
 
   const queried = await queryLogistics(kept, input, logger, onLog, onProgress);
   if (queried.stopped) return rememberStop(queried.stopped, kept, logger, onLog);
+  const stopBeforeComplete = input.shouldStop();
+  if (stopBeforeComplete) return rememberStop(stopBeforeComplete, kept, logger, onLog);
   const built = buildRows(kept, queried.logisticsById);
   for (const entry of built.logs) push(logger, onLog, entry.level, entry.message);
   if (queried.failCount > 0) {

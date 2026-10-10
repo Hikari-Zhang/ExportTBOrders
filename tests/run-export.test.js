@@ -238,6 +238,38 @@ test('弹窗关闭使用单独文案', async () => {
   assert.ok(messagesOf(h.logs).includes('弹窗已关闭，导出已取消'));
 });
 
+test('第一页失败重试前已取消则不再请求', async () => {
+  let pageCalls = 0;
+  const h = harness({}, {});
+  h.input.fetchPage = async () => {
+    pageCalls += 1;
+    h.setStop(() => 'cancel');
+    return { ok: false, status: 500, text: 'no' };
+  };
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(pageCalls, 1);
+  assert.ok(messagesOf(h.logs).some((line) => line.includes('已取消')));
+});
+
+test('物流阶段开始前取消则不为 complete', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [order('only', '2026-10-01 10:00:00', '待发货', '商品')],
+      }),
+    },
+  };
+  const h = harness(pages, {});
+  h.setStop(() => 'cancel');
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'cancelled');
+  assert.notEqual(result.status, 'complete');
+  assert.ok(messagesOf(h.logs).some((line) => line.includes('已取消')));
+});
+
 test('开始日期晚于结束日期时不发请求', async () => {
   let called = false;
   const h = harness({}, {});
