@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>淘宝订单导出</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>淘宝订单导出</h1>
+  <p id="page-message"></p>
+  <button id="open-page" type="button" hidden>打开订单页</button>
+  <label>开始日期 <input id="start-date" type="date"></label>
+  <label>结束日期 <input id="end-date" type="date"></label>
+  <p id="date-error" hidden>开始日期不能晚于结束日期</p>
+  <fieldset>
+    <legend>格式</legend>
+    <label><input name="format" type="radio" value="xlsx" checked> Excel</label>
+    <label><input name="format" type="radio" value="csv"> CSV</label>
+  </fieldset>
+  <button id="export" type="button">开始导出</button>
+  <button id="partial" type="button" hidden>导出已获取的部分</button>
+  <p id="progress"></p>
+  <pre id="log"></pre>
+  <script src="popup.js"></script>
+</body>
+</html>

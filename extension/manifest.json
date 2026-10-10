@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "淘宝订单导出",
+  "version": "1.0.0",
+  "description": "把已买到的宝贝导出为表格，包含商品和物流信息。数据只留在本机。",
+  "action": {
+    "default_title": "淘宝订单导出",
+    "default_popup": "popup/popup.html"
+  },
+  "host_permissions": [
+    "https://buyertrade.taobao.com/*",
+    "https://trade.taobao.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://buyertrade.taobao.com/trade/itemlist/*",
+        "https://trade.taobao.com/trade/itemlist/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

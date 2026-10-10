@@ -2,9 +2,13 @@
   "name": "export-tb-orders",
   "private": true,
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "build": "esbuild src/content-entry.js --bundle --outfile=extension/content.js --format=iife && esbuild src/popup-entry.js --bundle --outfile=extension/popup/popup.js --format=iife"
   },
   "dependencies": {
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
