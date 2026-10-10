@@ -38,4 +38,13 @@ function classifyTime(createTime, startDate, endDate) {
   return 'inside';
 }
 
-module.exports = { formatYmd, defaultRange, classifyTime };
+function isBeforeThreeMonths(startDate, now = new Date()) {
+  const boundary = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+  boundary.setHours(0, 0, 0, 0);
+  const start = parseDateTime(startDate);
+  if (!start) return false;
+  start.setHours(0, 0, 0, 0);
+  return start.getTime() < boundary.getTime();
+}
+
+module.exports = { formatYmd, defaultRange, classifyTime, isBeforeThreeMonths };

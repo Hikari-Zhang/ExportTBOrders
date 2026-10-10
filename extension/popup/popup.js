@@ -52,7 +52,15 @@
         if (time.getTime() > end.getTime()) return "after";
         return "inside";
       }
-      module.exports = { formatYmd, defaultRange: defaultRange2, classifyTime };
+      function isBeforeThreeMonths(startDate, now = /* @__PURE__ */ new Date()) {
+        const boundary = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+        boundary.setHours(0, 0, 0, 0);
+        const start = parseDateTime(startDate);
+        if (!start) return false;
+        start.setHours(0, 0, 0, 0);
+        return start.getTime() < boundary.getTime();
+      }
+      module.exports = { formatYmd, defaultRange: defaultRange2, classifyTime, isBeforeThreeMonths };
     }
   });
 
@@ -97,6 +105,30 @@
         },
         stopOld(orderId, createTime) {
           return `\u8BA2\u5355 ${orderId} \u4E0B\u5355\u65F6\u95F4 ${createTime} \u65E9\u4E8E\u5F00\u59CB\u65E5\u671F\uFF0C\u505C\u6B62\u7FFB\u9875`;
+        },
+        skipOld(orderId, createTime) {
+          return `\u8BA2\u5355 ${orderId} \u4E0B\u5355\u65F6\u95F4 ${createTime} \u65E9\u4E8E\u5F00\u59CB\u65E5\u671F\uFF0C\u5DF2\u8DF3\u8FC7`;
+        },
+        pageAllOld() {
+          return "\u672C\u9875\u8BA2\u5355\u90FD\u65E9\u4E8E\u5F00\u59CB\u65E5\u671F\uFF0C\u505C\u6B62\u8FD9\u4E00\u6BB5\u5217\u8868";
+        },
+        historyStart() {
+          return "\u8FD1\u671F\u5217\u8868\u5DF2\u7FFB\u5B8C\uFF0C\u5F00\u59CB\u8BFB\u53D6\u4E09\u4E2A\u6708\u524D\u7684\u8BA2\u5355";
+        },
+        dateSearch(startDate, endDate) {
+          return `\u6309\u6210\u4EA4\u65F6\u95F4\u641C\u7D22\uFF1A${startDate} 00:00:00 \u81F3 ${endDate} 23:59:59`;
+        },
+        officialStatus(label, code) {
+          return `\u6309\u8BA2\u5355\u72B6\u6001\u641C\u7D22\uFF1A${label}\uFF08${code}\uFF09`;
+        },
+        readingHistory(n) {
+          return `\u6B63\u5728\u8BFB\u53D6\u4E09\u4E2A\u6708\u524D\u8BA2\u5355\u7B2C ${n} \u9875`;
+        },
+        progressHistory(n, orderCount) {
+          return `\u6B63\u5728\u8BFB\u53D6\u4E09\u4E2A\u6708\u524D\u8BA2\u5355\u7B2C ${n} \u9875\uFF0C\u5DF2\u5F97\u5230 ${orderCount} \u7B14\u8BA2\u5355`;
+        },
+        repeatedPage() {
+          return "\u8FD9\u4E00\u9875\u6CA1\u6709\u65B0\u8BA2\u5355\uFF0C\u505C\u6B62\u8FD9\u4E00\u6BB5\u5217\u8868";
         },
         noMore(n) {
           return `\u7B2C ${n} \u9875\u540E\u6CA1\u6709\u66F4\u591A\u8BA2\u5355`;

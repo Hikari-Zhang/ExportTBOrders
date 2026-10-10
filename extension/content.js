@@ -39,6 +39,30 @@
         stopOld(orderId, createTime) {
           return `\u8BA2\u5355 ${orderId} \u4E0B\u5355\u65F6\u95F4 ${createTime} \u65E9\u4E8E\u5F00\u59CB\u65E5\u671F\uFF0C\u505C\u6B62\u7FFB\u9875`;
         },
+        skipOld(orderId, createTime) {
+          return `\u8BA2\u5355 ${orderId} \u4E0B\u5355\u65F6\u95F4 ${createTime} \u65E9\u4E8E\u5F00\u59CB\u65E5\u671F\uFF0C\u5DF2\u8DF3\u8FC7`;
+        },
+        pageAllOld() {
+          return "\u672C\u9875\u8BA2\u5355\u90FD\u65E9\u4E8E\u5F00\u59CB\u65E5\u671F\uFF0C\u505C\u6B62\u8FD9\u4E00\u6BB5\u5217\u8868";
+        },
+        historyStart() {
+          return "\u8FD1\u671F\u5217\u8868\u5DF2\u7FFB\u5B8C\uFF0C\u5F00\u59CB\u8BFB\u53D6\u4E09\u4E2A\u6708\u524D\u7684\u8BA2\u5355";
+        },
+        dateSearch(startDate, endDate) {
+          return `\u6309\u6210\u4EA4\u65F6\u95F4\u641C\u7D22\uFF1A${startDate} 00:00:00 \u81F3 ${endDate} 23:59:59`;
+        },
+        officialStatus(label, code) {
+          return `\u6309\u8BA2\u5355\u72B6\u6001\u641C\u7D22\uFF1A${label}\uFF08${code}\uFF09`;
+        },
+        readingHistory(n) {
+          return `\u6B63\u5728\u8BFB\u53D6\u4E09\u4E2A\u6708\u524D\u8BA2\u5355\u7B2C ${n} \u9875`;
+        },
+        progressHistory(n, orderCount) {
+          return `\u6B63\u5728\u8BFB\u53D6\u4E09\u4E2A\u6708\u524D\u8BA2\u5355\u7B2C ${n} \u9875\uFF0C\u5DF2\u5F97\u5230 ${orderCount} \u7B14\u8BA2\u5355`;
+        },
+        repeatedPage() {
+          return "\u8FD9\u4E00\u9875\u6CA1\u6709\u65B0\u8BA2\u5355\uFF0C\u505C\u6B62\u8FD9\u4E00\u6BB5\u5217\u8868";
+        },
         noMore(n) {
           return `\u7B2C ${n} \u9875\u540E\u6CA1\u6709\u66F4\u591A\u8BA2\u5355`;
         },
@@ -216,7 +240,15 @@
         if (time.getTime() > end.getTime()) return "after";
         return "inside";
       }
-      module.exports = { formatYmd, defaultRange, classifyTime };
+      function isBeforeThreeMonths(startDate, now = /* @__PURE__ */ new Date()) {
+        const boundary = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+        boundary.setHours(0, 0, 0, 0);
+        const start = parseDateTime(startDate);
+        if (!start) return false;
+        start.setHours(0, 0, 0, 0);
+        return start.getTime() < boundary.getTime();
+      }
+      module.exports = { formatYmd, defaultRange, classifyTime, isBeforeThreeMonths };
     }
   });
 
@@ -224,23 +256,43 @@
   var require_order_status = __commonJS({
     "src/order-status.js"(exports, module) {
       var STATUS_FILTERS = [
-        { id: "wait-pay", label: "\u5F85\u4ED8\u6B3E", keywords: ["\u7B49\u5F85\u4E70\u5BB6\u4ED8\u6B3E", "\u5F85\u4ED8\u6B3E"] },
-        { id: "wait-send", label: "\u5F85\u53D1\u8D27", keywords: ["\u7B49\u5F85\u5356\u5BB6\u53D1\u8D27", "\u5F85\u53D1\u8D27", "\u4E70\u5BB6\u5DF2\u4ED8\u6B3E"] },
-        { id: "wait-receive", label: "\u5F85\u6536\u8D27", keywords: ["\u5356\u5BB6\u5DF2\u53D1\u8D27", "\u5F85\u6536\u8D27", "\u5DF2\u53D1\u8D27", "\u90E8\u5206\u53D1\u8D27"] },
-        { id: "success", label: "\u4EA4\u6613\u6210\u529F", keywords: ["\u4EA4\u6613\u6210\u529F"] },
-        { id: "closed", label: "\u4EA4\u6613\u5173\u95ED", keywords: ["\u4EA4\u6613\u5173\u95ED"] },
-        { id: "refund", label: "\u9000\u6B3E", keywords: ["\u9000\u6B3E"] }
+        { id: "wait-pay", label: "\u5F85\u4ED8\u6B3E", orderStatus: "WAIT_BUYER_PAY", keywords: ["\u7B49\u5F85\u4E70\u5BB6\u4ED8\u6B3E", "\u5F85\u4ED8\u6B3E"] },
+        { id: "wait-send", label: "\u5F85\u53D1\u8D27", orderStatus: "WAIT_SELLER_SEND_GOODS", keywords: ["\u7B49\u5F85\u5356\u5BB6\u53D1\u8D27", "\u5F85\u53D1\u8D27", "\u4E70\u5BB6\u5DF2\u4ED8\u6B3E"] },
+        { id: "wait-receive", label: "\u5F85\u6536\u8D27", orderStatus: "WAIT_BUYER_CONFIRM_GOODS", keywords: ["\u5356\u5BB6\u5DF2\u53D1\u8D27", "\u5F85\u6536\u8D27", "\u5DF2\u53D1\u8D27", "\u90E8\u5206\u53D1\u8D27"] },
+        { id: "success", label: "\u4EA4\u6613\u6210\u529F", orderStatus: "TRADE_FINISHED", keywords: ["\u4EA4\u6613\u6210\u529F"] },
+        { id: "closed", label: "\u4EA4\u6613\u5173\u95ED", orderStatus: "TRADE_CLOSED", keywords: ["\u4EA4\u6613\u5173\u95ED"] },
+        { id: "refund", label: "\u9000\u6B3E", orderStatus: "REFUNDING", keywords: ["\u9000\u6B3E"] }
       ];
       function statusLabel(id) {
         const found = STATUS_FILTERS.find((item) => item.id === id);
         return found ? found.label : id;
+      }
+      function labelForOfficialStatus(code) {
+        const found = STATUS_FILTERS.find((item) => item.orderStatus === code);
+        return found ? found.label : code;
       }
       function matchesStatus(statusText, selectedIds) {
         if (!Array.isArray(selectedIds) || selectedIds.includes("all")) return true;
         const text = statusText == null ? "" : String(statusText);
         return STATUS_FILTERS.some((item) => selectedIds.includes(item.id) && item.keywords.some((word) => text.includes(word)));
       }
-      module.exports = { STATUS_FILTERS, matchesStatus, statusLabel };
+      function officialOrderStatuses(selectedIds) {
+        if (!Array.isArray(selectedIds) || selectedIds.includes("all")) return [""];
+        const codes = [];
+        for (const id of selectedIds) {
+          const found = STATUS_FILTERS.find((item) => item.id === id);
+          if (found) codes.push(found.orderStatus);
+        }
+        if (codes.length === 0 || codes.length === STATUS_FILTERS.length) return [""];
+        return codes;
+      }
+      module.exports = {
+        STATUS_FILTERS,
+        matchesStatus,
+        statusLabel,
+        labelForOfficialStatus,
+        officialOrderStatuses
+      };
     }
   });
 
@@ -525,8 +577,8 @@
     "src/run-export.js"(exports, module) {
       var { messages: messages2 } = require_messages();
       var { createLogger: createLogger2 } = require_logger();
-      var { classifyTime } = require_dates();
-      var { matchesStatus, statusLabel } = require_order_status();
+      var { classifyTime, isBeforeThreeMonths } = require_dates();
+      var { matchesStatus, statusLabel, labelForOfficialStatus, officialOrderStatuses } = require_order_status();
       var { needsLogistics, buildRows: buildRows2 } = require_parse_orders();
       var { parseLogisticsBody } = require_parse_logistics();
       var { parseLegacyLogistics: parseLegacyLogistics2 } = require_parse_legacy_logistics();
@@ -565,14 +617,24 @@
         }
         return body.includes("_____tmd_____") || body.includes("x5secdata") || body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE");
       }
-      async function readPage(fetchPage2, pageNum) {
+      function listCursor(text) {
         try {
-          const response = await fetchPage2(pageNum);
+          const json = JSON.parse(text);
+          const value = json.lastStartRow || json.page && (json.page.lastStartRow || json.page.lastEndRow) || "";
+          return value == null ? "" : String(value);
+        } catch {
+          return "";
+        }
+      }
+      async function readPage(fetchPage2, pageNum, context) {
+        try {
+          const response = await fetchPage2(pageNum, context);
           if (!response || response.ok === false) {
             const status = response && response.status ? response.status : 0;
             return { type: "retryable", reason: `HTTP ${status}` };
           }
-          return classifyListResponse(response.text);
+          const classified = classifyListResponse(response.text);
+          return { ...classified, lastStartRow: listCursor(response.text) };
         } catch {
           return { type: "retryable", reason: "\u7F51\u7EDC\u9519\u8BEF" };
         }
@@ -704,6 +766,101 @@
         }
         return { stopped: null, risk: false, logisticsById, failCount };
       }
+      var MAX_PAGES = 300;
+      async function pageThrough(input, logger, onLog, onProgress, kept, seen, archive, orderStatus) {
+        let pageNum = 1;
+        let lastStartRow = "";
+        const contextBase = { archive };
+        while (pageNum <= MAX_PAGES) {
+          const stop = input.shouldStop();
+          if (stop) return { stopped: stop };
+          if (archive) {
+            onProgress(messages2.progressHistory(pageNum, kept.length));
+            push(logger, onLog, "info", messages2.readingHistory(pageNum));
+          } else {
+            onProgress(messages2.progressPage(pageNum, kept.length));
+            push(logger, onLog, "info", messages2.readingPage(pageNum));
+          }
+          const context = {
+            ...contextBase,
+            lastStartRow,
+            dateBegin: `${input.startDate} 00:00:00`,
+            dateEnd: `${input.endDate} 23:59:59`,
+            orderStatus: orderStatus || ""
+          };
+          let classified = await readPage(input.fetchPage, pageNum, context);
+          if (classified.type === "retryable") {
+            push(logger, onLog, "warn", messages2.pageRetry(pageNum, classified.reason));
+            const stopBeforeRetry = input.shouldStop();
+            if (stopBeforeRetry) return { stopped: stopBeforeRetry };
+            classified = await readPage(input.fetchPage, pageNum, context);
+            if (classified.type === "retryable") {
+              return { fatal: { kind: "page", message: messages2.pageFail(pageNum, classified.reason, kept.length) } };
+            }
+          }
+          if (classified.type === "login") {
+            return { fatal: { kind: "login", message: messages2.notLogin() } };
+          }
+          if (classified.type === "captcha") {
+            return { fatal: { kind: "captcha", message: messages2.captcha(kept.length) } };
+          }
+          if (classified.type === "unrecognized") {
+            return { fatal: { kind: "unknown", message: messages2.unrecognized(classified.keys) } };
+          }
+          if (classified.lastStartRow) lastStartRow = classified.lastStartRow;
+          const orders = classified.orders;
+          if (orders.length === 0) {
+            push(logger, onLog, "info", messages2.noMore(pageNum));
+            return { done: true };
+          }
+          let fresh = 0;
+          let inRange = 0;
+          let hasNotBefore = false;
+          let hasBefore = false;
+          for (const order of orders) {
+            const orderId = order.id == null ? "" : String(order.id);
+            if (seen.has(orderId)) continue;
+            seen.add(orderId);
+            fresh += 1;
+            const createTime = order.orderInfo && order.orderInfo.createTime;
+            const when = classifyTime(createTime, input.startDate, input.endDate);
+            if (when === "after") {
+              hasNotBefore = true;
+              push(logger, onLog, "info", messages2.skipNew(orderId, createTime));
+              continue;
+            }
+            if (when === "before") {
+              hasBefore = true;
+              push(logger, onLog, "info", messages2.skipOld(orderId, createTime));
+              continue;
+            }
+            hasNotBefore = true;
+            inRange += 1;
+            const status = order.statusInfo ? order.statusInfo.text : "";
+            if (!matchesStatus(status, input.statuses)) {
+              push(logger, onLog, "info", messages2.skipStatus(orderId, status));
+              continue;
+            }
+            kept.push(order);
+          }
+          push(logger, onLog, "info", messages2.pageOk(pageNum, orders.length, inRange));
+          if (fresh === 0) {
+            push(logger, onLog, "info", messages2.repeatedPage());
+            return { done: true };
+          }
+          if (!hasNotBefore && hasBefore) {
+            push(logger, onLog, "info", messages2.pageAllOld());
+            return { done: true };
+          }
+          if (orders.length < PAGE_SIZE) {
+            push(logger, onLog, "info", messages2.noMore(pageNum));
+            return { done: true };
+          }
+          pageNum += 1;
+        }
+        push(logger, onLog, "warn", messages2.repeatedPage());
+        return { done: true };
+      }
       async function runExport2(input) {
         const onLog = input.onLog || (() => {
         });
@@ -715,67 +872,28 @@
           return resultOf("stopped", [], logger, 0, [], {});
         }
         push(logger, onLog, "info", messages2.start(input.startDate, input.endDate, input.format));
+        push(logger, onLog, "info", messages2.dateSearch(input.startDate, input.endDate));
         if (Array.isArray(input.statuses) && !input.statuses.includes("all")) {
           const labels = input.statuses.map(statusLabel).join("\u3001");
           push(logger, onLog, "info", messages2.statusFilter(labels));
         }
         const kept = [];
-        let pageNum = 1;
-        let stopPaging = false;
-        while (!stopPaging) {
-          const stop = input.shouldStop();
-          if (stop) return rememberStop(stop, kept, logger, onLog);
-          onProgress(messages2.progressPage(pageNum, kept.length));
-          push(logger, onLog, "info", messages2.readingPage(pageNum));
-          let classified = await readPage(input.fetchPage, pageNum);
-          if (classified.type === "retryable") {
-            push(logger, onLog, "warn", messages2.pageRetry(pageNum, classified.reason));
-            const stopBeforeRetry = input.shouldStop();
-            if (stopBeforeRetry) return rememberStop(stopBeforeRetry, kept, logger, onLog);
-            classified = await readPage(input.fetchPage, pageNum);
-            if (classified.type === "retryable") {
-              return stopWith("page", messages2.pageFail(pageNum, classified.reason, kept.length), kept, logger, onLog);
-            }
+        const seen = /* @__PURE__ */ new Set();
+        const now = (input.now || (() => /* @__PURE__ */ new Date()))();
+        const readHistory = isBeforeThreeMonths(input.startDate, now);
+        for (const orderStatus of officialOrderStatuses(input.statuses)) {
+          if (orderStatus) {
+            push(logger, onLog, "info", messages2.officialStatus(labelForOfficialStatus(orderStatus), orderStatus));
           }
-          if (classified.type === "login") {
-            return stopWith("login", messages2.notLogin(), kept, logger, onLog);
+          const recent = await pageThrough(input, logger, onLog, onProgress, kept, seen, false, orderStatus);
+          if (recent.stopped) return rememberStop(recent.stopped, kept, logger, onLog);
+          if (recent.fatal) return stopWith(recent.fatal.kind, recent.fatal.message, kept, logger, onLog);
+          if (readHistory) {
+            push(logger, onLog, "info", messages2.historyStart());
+            const history = await pageThrough(input, logger, onLog, onProgress, kept, seen, true, orderStatus);
+            if (history.stopped) return rememberStop(history.stopped, kept, logger, onLog);
+            if (history.fatal) return stopWith(history.fatal.kind, history.fatal.message, kept, logger, onLog);
           }
-          if (classified.type === "captcha") {
-            return stopWith("captcha", messages2.captcha(kept.length), kept, logger, onLog);
-          }
-          if (classified.type === "unrecognized") {
-            return stopWith("unknown", messages2.unrecognized(classified.keys), kept, logger, onLog);
-          }
-          const orders = classified.orders;
-          let inRange = 0;
-          for (const order of orders) {
-            const createTime = order.orderInfo && order.orderInfo.createTime;
-            const when = classifyTime(createTime, input.startDate, input.endDate);
-            const orderId = order.id == null ? "" : String(order.id);
-            if (when === "after") {
-              push(logger, onLog, "info", messages2.skipNew(orderId, createTime));
-              continue;
-            }
-            if (when === "before") {
-              push(logger, onLog, "info", messages2.stopOld(orderId, createTime));
-              stopPaging = true;
-              break;
-            }
-            inRange += 1;
-            const status = order.statusInfo ? order.statusInfo.text : "";
-            if (!matchesStatus(status, input.statuses)) {
-              push(logger, onLog, "info", messages2.skipStatus(orderId, status));
-              continue;
-            }
-            kept.push(order);
-          }
-          push(logger, onLog, "info", messages2.pageOk(pageNum, orders.length, inRange));
-          if (stopPaging) break;
-          if (orders.length < PAGE_SIZE) {
-            push(logger, onLog, "info", messages2.noMore(pageNum));
-            break;
-          }
-          pageNum += 1;
         }
         if (kept.length === 0) {
           push(logger, onLog, "error", messages2.noOrders());
@@ -34194,12 +34312,19 @@
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1e3);
   }
-  async function fetchPage(pageNum) {
+  async function fetchPage(pageNum, context = {}) {
     const body = new URLSearchParams({
       pageNum: String(pageNum),
       pageSize: "15",
-      prePageNo: String(pageNum - 1)
+      prePageNo: String(Math.max(pageNum - 1, 0))
     });
+    if (context.archive) {
+      body.set("tabCode", "before3Months");
+      if (context.lastStartRow) body.set("lastStartRow", context.lastStartRow);
+    }
+    if (context.dateBegin) body.set("dateBegin", context.dateBegin);
+    if (context.dateEnd) body.set("dateEnd", context.dateEnd);
+    if (context.orderStatus) body.set("orderStatus", context.orderStatus);
     const response = await fetch(listUrl(), {
       method: "POST",
       credentials: "include",

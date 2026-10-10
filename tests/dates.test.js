@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { defaultRange, classifyTime, formatYmd } = require('../src/dates');
+const { defaultRange, classifyTime, formatYmd, isBeforeThreeMonths } = require('../src/dates');
 
 test('默认范围是最近 3 个日历月', () => {
   const range = defaultRange(new Date(2026, 9, 9, 21, 0, 0));
@@ -16,4 +16,7 @@ test('时间边界按本地日历日判断', () => {
   assert.equal(classifyTime('2026-10-09', '2026-07-09', '2026-10-09'), 'inside');
   assert.equal(classifyTime('', '2026-07-09', '2026-10-09'), 'invalid');
   assert.equal(classifyTime('昨天', '2026-07-09', '2026-10-09'), 'invalid');
+  assert.equal(isBeforeThreeMonths('2026-07-09', new Date(2026, 9, 9)), false);
+  assert.equal(isBeforeThreeMonths('2026-07-08', new Date(2026, 9, 9)), true);
+  assert.equal(isBeforeThreeMonths('2025-01-01', new Date(2026, 9, 10)), true);
 });

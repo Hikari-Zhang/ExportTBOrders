@@ -38,12 +38,19 @@ function triggerDownload(filename, bytes, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function fetchPage(pageNum) {
+async function fetchPage(pageNum, context = {}) {
   const body = new URLSearchParams({
     pageNum: String(pageNum),
     pageSize: '15',
-    prePageNo: String(pageNum - 1),
+    prePageNo: String(Math.max(pageNum - 1, 0)),
   });
+  if (context.archive) {
+    body.set('tabCode', 'before3Months');
+    if (context.lastStartRow) body.set('lastStartRow', context.lastStartRow);
+  }
+  if (context.dateBegin) body.set('dateBegin', context.dateBegin);
+  if (context.dateEnd) body.set('dateEnd', context.dateEnd);
+  if (context.orderStatus) body.set('orderStatus', context.orderStatus);
   const response = await fetch(listUrl(), {
     method: 'POST',
     credentials: 'include',

@@ -20,6 +20,30 @@ const messages = {
   stopOld(orderId, createTime) {
     return `订单 ${orderId} 下单时间 ${createTime} 早于开始日期，停止翻页`;
   },
+  skipOld(orderId, createTime) {
+    return `订单 ${orderId} 下单时间 ${createTime} 早于开始日期，已跳过`;
+  },
+  pageAllOld() {
+    return '本页订单都早于开始日期，停止这一段列表';
+  },
+  historyStart() {
+    return '近期列表已翻完，开始读取三个月前的订单';
+  },
+  dateSearch(startDate, endDate) {
+    return `按成交时间搜索：${startDate} 00:00:00 至 ${endDate} 23:59:59`;
+  },
+  officialStatus(label, code) {
+    return `按订单状态搜索：${label}（${code}）`;
+  },
+  readingHistory(n) {
+    return `正在读取三个月前订单第 ${n} 页`;
+  },
+  progressHistory(n, orderCount) {
+    return `正在读取三个月前订单第 ${n} 页，已得到 ${orderCount} 笔订单`;
+  },
+  repeatedPage() {
+    return '这一页没有新订单，停止这一段列表';
+  },
   noMore(n) {
     return `第 ${n} 页后没有更多订单`;
   },

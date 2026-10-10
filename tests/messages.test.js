@@ -25,6 +25,8 @@ test('每条日志文案与设计说明一致', () => {
   assert.equal(messages.legacyBlocked('100'), '订单 100 旧版订单详情触发验证，本单物流留空');
   assert.equal(messages.skipStatus('100', '交易成功'), '订单 100 状态为「交易成功」，不在所选状态中，已跳过');
   assert.equal(messages.statusFilter('待付款、交易成功'), '导出所选状态：待付款、交易成功');
+  assert.equal(messages.dateSearch('2025-01-01', '2025-02-01'), '按成交时间搜索：2025-01-01 00:00:00 至 2025-02-01 23:59:59');
+  assert.equal(messages.officialStatus('交易成功', 'TRADE_FINISHED'), '按订单状态搜索：交易成功（TRADE_FINISHED）');
   assert.equal(messages.logisticsWithTrace('100', '中通', 'ZT1', '已签收'), '订单 100 物流：中通 ZT1 已签收');
   assert.equal(messages.logisticsNoTrace('100', '中通', 'ZT1'), '订单 100 物流：中通 ZT1，无轨迹');
   assert.equal(messages.noLogisticsInfo('100'), '订单 100 无物流信息');

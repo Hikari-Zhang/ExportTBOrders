@@ -104,7 +104,7 @@ test('晚于结束日期继续翻，早于开始日期停止', async () => {
   assert.equal(result.status, 'empty');
   const texts = messagesOf(h.logs);
   assert.ok(texts.includes('跳过订单 new，下单时间 2026-10-10 00:00:01 晚于结束日期'));
-  assert.ok(texts.includes('订单 old 下单时间 2026-07-08 23:59:59 早于开始日期，停止翻页'));
+  assert.ok(texts.includes('订单 old 下单时间 2026-07-08 23:59:59 早于开始日期，已跳过'));
   assert.ok(texts.includes('时间范围内没有订单，未下载表格'));
   assert.equal(pages[2], undefined);
 });
@@ -487,7 +487,68 @@ test('只导出选中的订单状态', async () => {
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0]['订单号'], 'paid');
   assert.ok(messagesOf(h.logs).includes('导出所选状态：交易成功'));
+  assert.ok(messagesOf(h.logs).includes('按订单状态搜索：交易成功（TRADE_FINISHED）'));
   assert.ok(messagesOf(h.logs).includes('订单 unpaid 状态为「等待买家付款」，不在所选状态中，已跳过'));
+});
+
+test('开始日期早于三个月时继续翻过插队的老订单，并读取三个月前列表', async () => {
+  const calls = [];
+  const h = harness({
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          ...Array.from({ length: 14 }, (_, index) => order(`recent-${index}`, '2026-04-23 00:33:16', '交易成功', '近期')),
+          order('outlier', '2019-02-20 12:21:38', '交易成功', '插队'),
+        ],
+      }),
+    },
+    2: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [order('target', '2025-01-15 10:00:00', '交易成功', '目标')],
+      }),
+    },
+  }, {});
+  h.input.startDate = '2025-01-01';
+  h.input.endDate = '2025-02-01';
+  h.input.now = () => new Date(2026, 9, 10);
+  h.input.fetchPage = async (pageNum, context = {}) => {
+    calls.push({ pageNum, archive: !!context.archive, dateBegin: context.dateBegin, dateEnd: context.dateEnd });
+    const page = h.pages[pageNum];
+    if (!page) return { ok: true, status: 200, text: JSON.stringify({ mainOrders: [] }) };
+    return page;
+  };
+  h.pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          ...Array.from({ length: 14 }, (_, index) => order(`recent-${index}`, '2026-04-23 00:33:16', '交易成功', '近期')),
+          order('outlier', '2019-02-20 12:21:38', '交易成功', '插队'),
+        ],
+      }),
+    },
+    2: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [order('target', '2025-01-15 10:00:00', '交易成功', '目标')],
+      }),
+    },
+  };
+  const result = await runExport(h.input);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0]['订单号'], 'target');
+  assert.ok(calls.some((call) => call.pageNum === 2 && call.archive === false));
+  assert.ok(calls.some((call) => call.archive === true));
+  assert.equal(calls[0].dateBegin, '2025-01-01 00:00:00');
+  assert.equal(calls[0].dateEnd, '2025-02-01 23:59:59');
+  assert.ok(messagesOf(h.logs).includes('近期列表已翻完，开始读取三个月前的订单'));
+  assert.ok(messagesOf(h.logs).includes('按成交时间搜索：2025-01-01 00:00:00 至 2025-02-01 23:59:59'));
 });
 
 test('开始日期晚于结束日期时不发请求', async () => {

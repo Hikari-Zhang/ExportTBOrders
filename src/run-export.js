@@ -1,7 +1,7 @@
 const { messages } = require('./messages');
 const { createLogger } = require('./logger');
-const { classifyTime } = require('./dates');
-const { matchesStatus, statusLabel } = require('./order-status');
+const { classifyTime, isBeforeThreeMonths } = require('./dates');
+const { matchesStatus, statusLabel, labelForOfficialStatus, officialOrderStatuses } = require('./order-status');
 const { needsLogistics, buildRows } = require('./parse-orders');
 const { parseLogisticsBody } = require('./parse-logistics');
 const { parseLegacyLogistics } = require('./parse-legacy-logistics');
@@ -55,14 +55,27 @@ function isLogisticsRisk(text) {
     || body.includes('FAIL_SYS_USER_VALIDATE');
 }
 
-async function readPage(fetchPage, pageNum) {
+function listCursor(text) {
   try {
-    const response = await fetchPage(pageNum);
+    const json = JSON.parse(text);
+    const value = json.lastStartRow
+      || (json.page && (json.page.lastStartRow || json.page.lastEndRow))
+      || '';
+    return value == null ? '' : String(value);
+  } catch {
+    return '';
+  }
+}
+
+async function readPage(fetchPage, pageNum, context) {
+  try {
+    const response = await fetchPage(pageNum, context);
     if (!response || response.ok === false) {
       const status = response && response.status ? response.status : 0;
       return { type: 'retryable', reason: `HTTP ${status}` };
     }
-    return classifyListResponse(response.text);
+    const classified = classifyListResponse(response.text);
+    return { ...classified, lastStartRow: listCursor(response.text) };
   } catch {
     return { type: 'retryable', reason: '网络错误' };
   }
@@ -202,62 +215,76 @@ async function queryLogistics(kept, input, logger, onLog, onProgress) {
   return { stopped: null, risk: false, logisticsById, failCount };
 }
 
-async function runExport(input) {
-  const onLog = input.onLog || (() => {});
-  const onProgress = input.onProgress || (() => {});
-  const logger = createLogger(input.now || (() => new Date()));
-  if (input.startDate > input.endDate) {
-    push(logger, onLog, 'error', messages.badDate(input.startDate, input.endDate));
-    return resultOf('stopped', [], logger, 0, [], {});
-  }
-  push(logger, onLog, 'info', messages.start(input.startDate, input.endDate, input.format));
-  if (Array.isArray(input.statuses) && !input.statuses.includes('all')) {
-    const labels = input.statuses.map(statusLabel).join('、');
-    push(logger, onLog, 'info', messages.statusFilter(labels));
-  }
-  const kept = [];
-  let pageNum = 1;
-  let stopPaging = false;
+const MAX_PAGES = 300;
 
-  while (!stopPaging) {
+async function pageThrough(input, logger, onLog, onProgress, kept, seen, archive, orderStatus) {
+  let pageNum = 1;
+  let lastStartRow = '';
+  const contextBase = { archive };
+  while (pageNum <= MAX_PAGES) {
     const stop = input.shouldStop();
-    if (stop) return rememberStop(stop, kept, logger, onLog);
-    onProgress(messages.progressPage(pageNum, kept.length));
-    push(logger, onLog, 'info', messages.readingPage(pageNum));
-    let classified = await readPage(input.fetchPage, pageNum);
+    if (stop) return { stopped: stop };
+    if (archive) {
+      onProgress(messages.progressHistory(pageNum, kept.length));
+      push(logger, onLog, 'info', messages.readingHistory(pageNum));
+    } else {
+      onProgress(messages.progressPage(pageNum, kept.length));
+      push(logger, onLog, 'info', messages.readingPage(pageNum));
+    }
+    const context = {
+      ...contextBase,
+      lastStartRow,
+      dateBegin: `${input.startDate} 00:00:00`,
+      dateEnd: `${input.endDate} 23:59:59`,
+      orderStatus: orderStatus || '',
+    };
+    let classified = await readPage(input.fetchPage, pageNum, context);
     if (classified.type === 'retryable') {
       push(logger, onLog, 'warn', messages.pageRetry(pageNum, classified.reason));
       const stopBeforeRetry = input.shouldStop();
-      if (stopBeforeRetry) return rememberStop(stopBeforeRetry, kept, logger, onLog);
-      classified = await readPage(input.fetchPage, pageNum);
+      if (stopBeforeRetry) return { stopped: stopBeforeRetry };
+      classified = await readPage(input.fetchPage, pageNum, context);
       if (classified.type === 'retryable') {
-        return stopWith('page', messages.pageFail(pageNum, classified.reason, kept.length), kept, logger, onLog);
+        return { fatal: { kind: 'page', message: messages.pageFail(pageNum, classified.reason, kept.length) } };
       }
     }
     if (classified.type === 'login') {
-      return stopWith('login', messages.notLogin(), kept, logger, onLog);
+      return { fatal: { kind: 'login', message: messages.notLogin() } };
     }
     if (classified.type === 'captcha') {
-      return stopWith('captcha', messages.captcha(kept.length), kept, logger, onLog);
+      return { fatal: { kind: 'captcha', message: messages.captcha(kept.length) } };
     }
     if (classified.type === 'unrecognized') {
-      return stopWith('unknown', messages.unrecognized(classified.keys), kept, logger, onLog);
+      return { fatal: { kind: 'unknown', message: messages.unrecognized(classified.keys) } };
     }
+    if (classified.lastStartRow) lastStartRow = classified.lastStartRow;
     const orders = classified.orders;
+    if (orders.length === 0) {
+      push(logger, onLog, 'info', messages.noMore(pageNum));
+      return { done: true };
+    }
+    let fresh = 0;
     let inRange = 0;
+    let hasNotBefore = false;
+    let hasBefore = false;
     for (const order of orders) {
+      const orderId = order.id == null ? '' : String(order.id);
+      if (seen.has(orderId)) continue;
+      seen.add(orderId);
+      fresh += 1;
       const createTime = order.orderInfo && order.orderInfo.createTime;
       const when = classifyTime(createTime, input.startDate, input.endDate);
-      const orderId = order.id == null ? '' : String(order.id);
       if (when === 'after') {
+        hasNotBefore = true;
         push(logger, onLog, 'info', messages.skipNew(orderId, createTime));
         continue;
       }
       if (when === 'before') {
-        push(logger, onLog, 'info', messages.stopOld(orderId, createTime));
-        stopPaging = true;
-        break;
+        hasBefore = true;
+        push(logger, onLog, 'info', messages.skipOld(orderId, createTime));
+        continue;
       }
+      hasNotBefore = true;
       inRange += 1;
       const status = order.statusInfo ? order.statusInfo.text : '';
       if (!matchesStatus(status, input.statuses)) {
@@ -267,12 +294,55 @@ async function runExport(input) {
       kept.push(order);
     }
     push(logger, onLog, 'info', messages.pageOk(pageNum, orders.length, inRange));
-    if (stopPaging) break;
+    if (fresh === 0) {
+      push(logger, onLog, 'info', messages.repeatedPage());
+      return { done: true };
+    }
+    if (!hasNotBefore && hasBefore) {
+      push(logger, onLog, 'info', messages.pageAllOld());
+      return { done: true };
+    }
     if (orders.length < PAGE_SIZE) {
       push(logger, onLog, 'info', messages.noMore(pageNum));
-      break;
+      return { done: true };
     }
     pageNum += 1;
+  }
+  push(logger, onLog, 'warn', messages.repeatedPage());
+  return { done: true };
+}
+
+async function runExport(input) {
+  const onLog = input.onLog || (() => {});
+  const onProgress = input.onProgress || (() => {});
+  const logger = createLogger(input.now || (() => new Date()));
+  if (input.startDate > input.endDate) {
+    push(logger, onLog, 'error', messages.badDate(input.startDate, input.endDate));
+    return resultOf('stopped', [], logger, 0, [], {});
+  }
+  push(logger, onLog, 'info', messages.start(input.startDate, input.endDate, input.format));
+  push(logger, onLog, 'info', messages.dateSearch(input.startDate, input.endDate));
+  if (Array.isArray(input.statuses) && !input.statuses.includes('all')) {
+    const labels = input.statuses.map(statusLabel).join('、');
+    push(logger, onLog, 'info', messages.statusFilter(labels));
+  }
+  const kept = [];
+  const seen = new Set();
+  const now = (input.now || (() => new Date()))();
+  const readHistory = isBeforeThreeMonths(input.startDate, now);
+  for (const orderStatus of officialOrderStatuses(input.statuses)) {
+    if (orderStatus) {
+      push(logger, onLog, 'info', messages.officialStatus(labelForOfficialStatus(orderStatus), orderStatus));
+    }
+    const recent = await pageThrough(input, logger, onLog, onProgress, kept, seen, false, orderStatus);
+    if (recent.stopped) return rememberStop(recent.stopped, kept, logger, onLog);
+    if (recent.fatal) return stopWith(recent.fatal.kind, recent.fatal.message, kept, logger, onLog);
+    if (readHistory) {
+      push(logger, onLog, 'info', messages.historyStart());
+      const history = await pageThrough(input, logger, onLog, onProgress, kept, seen, true, orderStatus);
+      if (history.stopped) return rememberStop(history.stopped, kept, logger, onLog);
+      if (history.fatal) return stopWith(history.fatal.kind, history.fatal.message, kept, logger, onLog);
+    }
   }
 
   if (kept.length === 0) {
