@@ -61,6 +61,15 @@ chrome.runtime.onConnect.addListener((port) => {
     if (message.type !== 'start' || running) return;
     running = true;
     stopKind = null;
+    function postToPopup(payload) {
+      if (disconnected) return;
+      try {
+        port.postMessage(payload);
+      } catch {
+        disconnected = true;
+        stopKind = 'popup-closed';
+      }
+    }
     const result = await runExport({
       startDate: message.startDate,
       endDate: message.endDate,
@@ -71,10 +80,10 @@ chrome.runtime.onConnect.addListener((port) => {
       shouldStop: () => stopKind,
       now: () => new Date(),
       onProgress(text) {
-        if (!disconnected) port.postMessage({ type: 'progress', text });
+        postToPopup({ type: 'progress', text });
       },
       onLog(line) {
-        if (!disconnected) port.postMessage({ type: 'log', line });
+        postToPopup({ type: 'log', line });
       },
     });
     running = false;

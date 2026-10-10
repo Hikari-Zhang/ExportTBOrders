@@ -33663,6 +33663,7 @@
   endInput.value = range.endDate;
   var port = null;
   var running = false;
+  var starting = false;
   var lastResult = null;
   var tabUrl = "";
   var logger = createLogger(() => /* @__PURE__ */ new Date());
@@ -33711,10 +33712,12 @@
   startInput.addEventListener("change", render);
   endInput.addEventListener("change", render);
   exportButton.addEventListener("click", async () => {
+    if (starting) return;
     if (running) {
       if (port) port.postMessage({ type: "cancel" });
       return;
     }
+    starting = true;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     tabUrl = tab && tab.url ? tab.url : "";
     render();
@@ -33726,19 +33729,19 @@
       result: lastResult
     });
     if (view.showOpenPage) {
+      starting = false;
       addLog("error", messages.wrongPage());
       downloadLog();
       return;
     }
     if (view.dateError) {
+      starting = false;
       addLog("error", messages.badDate(startInput.value, endInput.value));
       downloadLog();
       return;
     }
     logger.lines.length = 0;
     lastResult = null;
-    running = true;
-    render();
     port = chrome.tabs.connect(tab.id, { name: "tb-order-export" });
     port.onMessage.addListener((message) => {
       if (message.type === "log") {
@@ -33768,6 +33771,9 @@
     port.onDisconnect.addListener(() => {
       port = null;
     });
+    starting = false;
+    running = true;
+    render();
     port.postMessage({
       type: "start",
       startDate: startInput.value,

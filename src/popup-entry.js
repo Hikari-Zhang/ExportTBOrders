@@ -22,6 +22,7 @@ endInput.value = range.endDate;
 
 let port = null;
 let running = false;
+let starting = false;
 let lastResult = null;
 let tabUrl = '';
 const logger = createLogger(() => new Date());
@@ -78,10 +79,12 @@ startInput.addEventListener('change', render);
 endInput.addEventListener('change', render);
 
 exportButton.addEventListener('click', async () => {
+  if (starting) return;
   if (running) {
     if (port) port.postMessage({ type: 'cancel' });
     return;
   }
+  starting = true;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   tabUrl = tab && tab.url ? tab.url : '';
   render();
@@ -93,19 +96,19 @@ exportButton.addEventListener('click', async () => {
     result: lastResult,
   });
   if (view.showOpenPage) {
+    starting = false;
     addLog('error', messages.wrongPage());
     downloadLog();
     return;
   }
   if (view.dateError) {
+    starting = false;
     addLog('error', messages.badDate(startInput.value, endInput.value));
     downloadLog();
     return;
   }
   logger.lines.length = 0;
   lastResult = null;
-  running = true;
-  render();
   port = chrome.tabs.connect(tab.id, { name: 'tb-order-export' });
   port.onMessage.addListener((message) => {
     if (message.type === 'log') {
@@ -135,6 +138,9 @@ exportButton.addEventListener('click', async () => {
   port.onDisconnect.addListener(() => {
     port = null;
   });
+  starting = false;
+  running = true;
+  render();
   port.postMessage({
     type: 'start',
     startDate: startInput.value,
