@@ -14,6 +14,7 @@ const endInput = document.getElementById('end-date');
 const dateError = document.getElementById('date-error');
 const statusError = document.getElementById('status-error');
 const exportButton = document.getElementById('export');
+const resumeButton = document.getElementById('resume');
 const partialButton = document.getElementById('partial');
 const progress = document.getElementById('progress');
 const logNode = document.getElementById('log');
@@ -132,6 +133,7 @@ exportButton.addEventListener('click', async () => {
   logger.lines.length = 0;
   lastResult = null;
   resultReceived = false;
+  resumeButton.hidden = true;
   savedStartDate = startInput.value;
   savedEndDate = endInput.value;
   savedFormat = selectedFormat();
@@ -144,9 +146,14 @@ exportButton.addEventListener('click', async () => {
       render();
     } else if (message.type === 'progress') {
       progress.textContent = message.text;
+    } else if (message.type === 'verify') {
+      progress.textContent = '遇到验证。请在订单页完成验证，再点订单页或这里的「继续导出」';
+      resumeButton.hidden = false;
+      render();
     } else if (message.type === 'result') {
       resultReceived = true;
       running = false;
+      resumeButton.hidden = true;
       lastResult = message.result;
       progress.textContent = '';
       try {
@@ -187,6 +194,12 @@ exportButton.addEventListener('click', async () => {
     format: savedFormat,
     statuses,
   });
+});
+
+resumeButton.addEventListener('click', () => {
+  if (port) port.postMessage({ type: 'continue' });
+  resumeButton.hidden = true;
+  progress.textContent = '继续导出';
 });
 
 partialButton.addEventListener('click', () => {

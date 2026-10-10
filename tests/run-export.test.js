@@ -165,7 +165,68 @@ test('未登录、验证码、无法识别都停止', async () => {
   assert.ok(readingIdx >= 0);
   assert.ok(captchaIdx >= 0);
   assert.ok(readingIdx < captchaIdx);
+});
 
+test('验证通过后从当前页继续', async () => {
+  let calls = 0;
+  const h = harness({}, {});
+  h.input.fetchPage = async () => {
+    calls += 1;
+    if (calls === 1) return { ok: true, status: 200, text: JSON.stringify({ url: 'https://sec.taobao.com/punish' }) };
+    return {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({ mainOrders: [order('100', '2026-10-01 10:00:00', '待发货', '杯子')] }),
+    };
+  };
+  h.input.waitForVerification = async (url) => {
+    assert.equal(url, 'https://sec.taobao.com/punish');
+    return null;
+  };
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.rows[0]['订单号'], '100');
+  assert.equal(calls, 2);
+  const texts = messagesOf(h.logs);
+  assert.ok(texts.some((line) => line.includes('遇到验证，导出已暂停')));
+  assert.ok(texts.some((line) => line.includes('已确认验证通过，继续导出')));
+});
+
+test('物流验证通过后继续查询后面的订单', async () => {
+  const calls = [];
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [
+          order('risk-1', '2026-10-01 10:00:00', '交易成功', '甲'),
+          order('ok-2', '2026-10-01 11:00:00', '交易成功', '乙'),
+        ],
+      }),
+    },
+  };
+  const h = harness(pages, {});
+  h.input.waitForVerification = async () => null;
+  h.input.fetchLogistics = async (orderId) => {
+    calls.push(orderId);
+    if (orderId === 'risk-1' && calls.filter((id) => id === 'risk-1').length === 1) {
+      return { ok: true, status: 200, text: JSON.stringify({ rgv587_flag: 'sm' }) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({ isSuccess: 'true', expressName: '韵达', expressId: 'YD9' }),
+    };
+  };
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'complete');
+  assert.deepEqual(calls, ['risk-1', 'risk-1', 'ok-2']);
+  assert.equal(result.rows[0]['运单号'], 'YD9');
+  assert.equal(result.rows[1]['运单号'], 'YD9');
+});
+
+test('无法识别的订单接口会停止', async () => {
   const unknown = harness({ 1: { ok: true, status: 200, text: JSON.stringify({ foo: 1 }) } }, {});
   const unknownResult = await runExport(unknown.input);
   assert.equal(unknownResult.status, 'stopped');
@@ -462,6 +523,68 @@ test('某一单旧版详情被拦截时，后面的订单仍查旧版详情', as
   assert.equal(messagesOf(h.logs).some((line) => line.includes('触发验证码或风控，已停止')), false);
 });
 
+test('旧版详情请求失败时不当成验证', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [order('tmall-1', '2025-05-27 13:46:49', '交易成功', '天猫订单')],
+      }),
+    },
+  };
+  let waits = 0;
+  const h = harness(pages, {
+    'tmall-1': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'false' }) },
+  }, { startDate: '2025-01-01', endDate: '2025-12-31' });
+  h.input.waitForVerification = async () => {
+    waits += 1;
+    return null;
+  };
+  h.input.fetchLegacyLogistics = async () => ({
+    ok: false,
+    status: 0,
+    error: 'TypeError: Failed to fetch',
+    text: '',
+  });
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'complete');
+  assert.equal(waits, 0);
+  assert.equal(result.rows[0]['运单号'], '');
+  assert.ok(messagesOf(h.logs).some((line) => line.includes('旧版物流页 HTTP 0')));
+  assert.equal(messagesOf(h.logs).some((line) => line.includes('遇到验证，导出已暂停')), false);
+});
+
+test('订单详情页里的风控脚本不当成验证', async () => {
+  const pages = {
+    1: {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({
+        mainOrders: [order('detail-1', '2025-05-27 13:46:49', '交易成功', '详情')],
+      }),
+    },
+  };
+  let waits = 0;
+  const h = harness(pages, {
+    'detail-1': { ok: true, status: 200, text: JSON.stringify({ isSuccess: 'false' }) },
+  }, { startDate: '2025-01-01', endDate: '2025-12-31' });
+  h.input.waitForVerification = async () => {
+    waits += 1;
+    return null;
+  };
+  h.input.fetchLegacyLogistics = async () => ({
+    ok: true,
+    status: 200,
+    blocked: true,
+    text: '<script>rgv587_flag punish 验证</script><p>订单编号 5117</p><p>成交时间 2025-05-27</p><p>实付款 53.90</p>',
+  });
+  const result = await runExport(h.input);
+  assert.equal(waits, 0);
+  assert.equal(result.status, 'complete');
+  assert.equal(messagesOf(h.logs).some((line) => line.includes('遇到验证，导出已暂停')), false);
+});
+
 test('只导出选中的订单状态', async () => {
   const pages = {
     1: {
@@ -545,8 +668,9 @@ test('开始日期早于三个月时继续翻过插队的老订单，并读取�
   assert.equal(result.rows[0]['订单号'], 'target');
   assert.ok(calls.some((call) => call.pageNum === 2 && call.archive === false));
   assert.ok(calls.some((call) => call.archive === true));
-  assert.equal(calls[0].dateBegin, '2025-01-01 00:00:00');
-  assert.equal(calls[0].dateEnd, '2025-02-01 23:59:59');
+  assert.equal(calls[0].dateBegin, '2025-01-01');
+  assert.equal(calls[0].dateEnd, '2025-02-01');
+  assert.ok(messagesOf(h.logs).includes('列表筛选参数：dateBegin=2025-01-01，dateEnd=2025-02-01，startTime=2025-01-01，endTime=2025-02-01，queryMore=true'));
   assert.ok(messagesOf(h.logs).includes('近期列表已翻完，开始读取三个月前的订单'));
   assert.ok(messagesOf(h.logs).includes('按成交时间搜索：2025-01-01 00:00:00 至 2025-02-01 23:59:59'));
 });

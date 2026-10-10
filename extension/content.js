@@ -51,6 +51,27 @@
         dateSearch(startDate, endDate) {
           return `\u6309\u6210\u4EA4\u65F6\u95F4\u641C\u7D22\uFF1A${startDate} 00:00:00 \u81F3 ${endDate} 23:59:59`;
         },
+        listFilter(summary) {
+          return `\u5217\u8868\u7B5B\u9009\u53C2\u6570\uFF1A${summary}`;
+        },
+        tokenAttached() {
+          return "\u5DF2\u9644\u5E26\u9875\u9762\u4EE4\u724C\u63D0\u4EA4\u65F6\u95F4\u7B5B\u9009";
+        },
+        tokenMissing() {
+          return "\u9875\u9762\u4E0A\u6CA1\u6709\u8BFB\u5230\u7B5B\u9009\u4EE4\u724C";
+        },
+        filterIgnored(time) {
+          return `\u7EAF\u65E5\u671F\u7B5B\u9009\u672A\u751F\u6548\uFF0C\u7B2C 1 \u9875\u6700\u65B0\u8BA2\u5355\u4ECD\u662F ${time}`;
+        },
+        filterDatetime() {
+          return "\u5DF2\u6539\u7528\u65E7\u7248\u65E5\u671F\u65F6\u95F4\u63D0\u4EA4\uFF0C\u670D\u52A1\u7AEF\u5F00\u59CB\u6309\u65F6\u95F4\u7B5B\u9009";
+        },
+        filterFromPage() {
+          return "\u5DF2\u6539\u7528\u9875\u9762\u4E0A\u7684\u641C\u7D22\u8BF7\u6C42";
+        },
+        filterLocal() {
+          return "\u9875\u9762\u641C\u7D22\u4E5F\u6CA1\u6709\u6309\u65F6\u95F4\u7B5B\u5230\uFF0C\u7EE7\u7EED\u5728\u672C\u5730\u8DF3\u8FC7\u8303\u56F4\u5916\u7684\u8BA2\u5355";
+        },
         officialStatus(label, code) {
           return `\u6309\u8BA2\u5355\u72B6\u6001\u641C\u7D22\uFF1A${label}\uFF08${code}\uFF09`;
         },
@@ -77,6 +98,12 @@
         },
         captcha(orderCount) {
           return `\u89E6\u53D1\u9A8C\u8BC1\u7801\u6216\u98CE\u63A7\uFF0C\u5DF2\u505C\u6B62\u3002\u8BF7\u5728\u8BA2\u5355\u9875\u5B8C\u6210\u9A8C\u8BC1\u540E\u518D\u5BFC\u51FA\u3002\u5DF2\u83B7\u53D6 ${orderCount} \u7B14\u8BA2\u5355`;
+        },
+        needVerify() {
+          return "\u9047\u5230\u9A8C\u8BC1\uFF0C\u5BFC\u51FA\u5DF2\u6682\u505C\u3002\u8BF7\u5728\u8BA2\u5355\u9875\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u7136\u540E\u70B9\u51FB\u300C\u7EE7\u7EED\u5BFC\u51FA\u300D";
+        },
+        verifyContinue() {
+          return "\u5DF2\u786E\u8BA4\u9A8C\u8BC1\u901A\u8FC7\uFF0C\u7EE7\u7EED\u5BFC\u51FA";
         },
         unrecognized(keys) {
           return `\u8BA2\u5355\u63A5\u53E3\u8FD4\u56DE\u65E0\u6CD5\u8BC6\u522B\uFF0C\u5DF2\u505C\u6B62\u3002\u54CD\u5E94\u5B57\u6BB5\uFF1A${keys}`;
@@ -161,6 +188,116 @@
         }
       };
       module.exports = { messages: messages2 };
+    }
+  });
+
+  // src/list-query.js
+  var require_list_query = __commonJS({
+    "src/list-query.js"(exports, module) {
+      var BEGIN_NAMES = ["dateBegin", "startTime"];
+      var END_NAMES = ["dateEnd", "endTime"];
+      function pickNames(detected, candidates) {
+        if (!detected || detected.length === 0) return candidates;
+        const found = candidates.filter((name) => detected.includes(name));
+        return found.length > 0 ? found : candidates;
+      }
+      function buildListQuery(options) {
+        const pageNum = Number(options.pageNum) || 1;
+        const detected = options.dateFields || [];
+        const query = {
+          pageNum: String(pageNum),
+          pageSize: "15",
+          prePageNo: String(Math.max(pageNum - 1, 0)),
+          queryOrder: "desc",
+          queryMore: "true"
+        };
+        for (const name of pickNames(detected, BEGIN_NAMES)) query[name] = options.startDate;
+        for (const name of pickNames(detected, END_NAMES)) query[name] = options.endDate;
+        if (options.orderStatus) query.orderStatus = options.orderStatus;
+        if (options.archive) {
+          query.tabCode = "before3Months";
+          if (options.lastStartRow) query.lastStartRow = options.lastStartRow;
+        }
+        return query;
+      }
+      function describeListQuery(query) {
+        const keys = ["dateBegin", "dateEnd", "startTime", "endTime", "orderStatus", "queryMore", "tabCode"];
+        return keys.filter((key) => query[key]).map((key) => `${key}=${query[key]}`).join("\uFF0C");
+      }
+      function newestOrderTime2(text) {
+        try {
+          const json = JSON.parse(text);
+          const order = json && Array.isArray(json.mainOrders) ? json.mainOrders[0] : null;
+          const time = order && order.orderInfo && order.orderInfo.createTime;
+          return time == null ? "" : String(time);
+        } catch {
+          return "";
+        }
+      }
+      function listFilterIgnored2(text, endDate) {
+        const time = newestOrderTime2(text);
+        if (!time || !endDate) return false;
+        return time.slice(0, 10) > endDate;
+      }
+      function attachToken2(query, token) {
+        const next = { ...query };
+        if (token) next._tb_token_ = token;
+        return next;
+      }
+      function classicDatedQuery2(options) {
+        const pageNum = Number(options.pageNum) || 1;
+        const query = {
+          pageNum: String(pageNum),
+          pageSize: "15",
+          prePageNo: String(Math.max(pageNum - 1, 0)),
+          queryOrder: "desc",
+          queryMore: "true",
+          dateBegin: `${options.startDate} 00:00:00`,
+          dateEnd: `${options.endDate} 23:59:59`
+        };
+        if (options.orderStatus) query.orderStatus = options.orderStatus;
+        if (options.archive) {
+          query.tabCode = "before3Months";
+          if (options.lastStartRow) query.lastStartRow = options.lastStartRow;
+        }
+        return query;
+      }
+      function applyPageNumber2(query, pageNum) {
+        const next = {
+          ...query,
+          pageNum: String(pageNum),
+          prePageNo: String(Math.max(Number(pageNum) - 1, 0))
+        };
+        if (Object.prototype.hasOwnProperty.call(query, "page")) next.page = String(pageNum);
+        return next;
+      }
+      function parseCapturedBody2(body) {
+        if (body == null) return null;
+        const text = String(body).trim();
+        if (!text) return null;
+        if (text.startsWith("{")) {
+          try {
+            const json = JSON.parse(text);
+            return json && typeof json === "object" && !Array.isArray(json) ? json : null;
+          } catch {
+            return null;
+          }
+        }
+        const params = new URLSearchParams(text);
+        const query = {};
+        for (const [key, value] of params) query[key] = value;
+        return Object.keys(query).length > 0 ? query : null;
+      }
+      module.exports = {
+        buildListQuery,
+        describeListQuery,
+        newestOrderTime: newestOrderTime2,
+        listFilterIgnored: listFilterIgnored2,
+        attachToken: attachToken2,
+        classicDatedQuery: classicDatedQuery2,
+        applyPageNumber: applyPageNumber2,
+        parseCapturedBody: parseCapturedBody2
+      };
     }
   });
 
@@ -576,6 +713,7 @@
   var require_run_export = __commonJS({
     "src/run-export.js"(exports, module) {
       var { messages: messages2 } = require_messages();
+      var { buildListQuery, describeListQuery } = require_list_query();
       var { createLogger: createLogger2 } = require_logger();
       var { classifyTime, isBeforeThreeMonths } = require_dates();
       var { matchesStatus, statusLabel, labelForOfficialStatus, officialOrderStatuses } = require_order_status();
@@ -602,6 +740,14 @@
       function looksLikeLogisticsPage(body) {
         return body.includes("\u7269\u6D41\u516C\u53F8") || body.includes("\u8FD0\u5355\u53F7") || body.includes("\u8FD0\u5355\u53F7\u7801") || body.includes("\u5FEB\u9012\u5355\u53F7") || body.includes("expressName");
       }
+      function looksLikeOrderPage(body) {
+        return body.includes("\u8BA2\u5355\u7F16\u53F7") || body.includes("\u6210\u4EA4\u65F6\u95F4") || body.includes("\u5B9E\u4ED8\u6B3E") || body.includes("\u7269\u6D41\u516C\u53F8") || body.includes("\u8FD0\u5355\u53F7") || body.includes("\u8FD0\u5355\u53F7\u7801") || body.includes("\u5FEB\u9012\u5355\u53F7");
+      }
+      function isCaptchaChallenge2(text) {
+        const body = text == null ? "" : String(text);
+        if (!body.trim() || looksLikeOrderPage(body) || looksLikeLogisticsPage(body)) return false;
+        return body.includes("_____tmd_____") || body.includes("FAIL_SYS_USER_VALIDATE") || body.includes("\u8BF7\u5B8C\u6210\u9A8C\u8BC1") || body.includes("\u6ED1\u52A8\u9A8C\u8BC1") || body.includes("\u5B89\u5168\u9A8C\u8BC1");
+      }
       function isLogisticsRisk(text) {
         const body = text == null ? "" : String(text);
         let json = null;
@@ -615,7 +761,7 @@
         if (json) {
           return body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE") || !!(json.url || json.rgv587_flag);
         }
-        return body.includes("_____tmd_____") || body.includes("x5secdata") || body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE");
+        return body.includes("_____tmd_____") || body.includes("FAIL_SYS_USER_VALIDATE") || body.includes("rgv587_flag");
       }
       function listCursor(text) {
         try {
@@ -634,7 +780,12 @@
             return { type: "retryable", reason: `HTTP ${status}` };
           }
           const classified = classifyListResponse(response.text);
-          return { ...classified, lastStartRow: listCursor(response.text) };
+          return {
+            ...classified,
+            lastStartRow: listCursor(response.text),
+            notes: response.notes || [],
+            body: response.text
+          };
         } catch {
           return { type: "retryable", reason: "\u7F51\u7EDC\u9519\u8BEF" };
         }
@@ -651,6 +802,24 @@
         push(logger, onLog, "error", message);
         if (kept.length > 0) return resultOf("partial-ready", [], logger, kept.length, kept, {});
         return resultOf("stopped", [], logger, 0, [], {});
+      }
+      function verificationUrl(text) {
+        try {
+          const json = JSON.parse(text);
+          if (json && typeof json.url === "string" && json.url.startsWith("https://")) return json.url;
+        } catch {
+          return "";
+        }
+        return "";
+      }
+      async function pauseForVerification(input, logger, onLog, onProgress, text) {
+        if (typeof input.waitForVerification !== "function") return "stop";
+        push(logger, onLog, "warn", messages2.needVerify());
+        onProgress(messages2.needVerify());
+        const stop = await input.waitForVerification(verificationUrl(text));
+        if (stop) return stop;
+        push(logger, onLog, "info", messages2.verifyContinue());
+        return null;
       }
       function usableLogistics(parsed) {
         return !!(parsed && parsed.ok && (parsed.company || parsed.trackingNo));
@@ -701,7 +870,9 @@
         } catch {
           return { reason: "\u65E7\u7248\u7269\u6D41\u9875\u7F51\u7EDC\u9519\u8BEF" };
         }
-        if (response && isLogisticsRisk(response.text)) return { risk: true };
+        if (response && response.blocked && isCaptchaChallenge2(response.text)) {
+          return { risk: true, text: response.text || "" };
+        }
         if (!response || response.ok === false) {
           const statusCode = response && response.status ? response.status : 0;
           return { reason: `\u65E7\u7248\u7269\u6D41\u9875 HTTP ${statusCode}` };
@@ -738,20 +909,42 @@
           } catch {
             response = null;
           }
-          const current = readLogisticsResponse(response, "\u7F51\u7EDC\u9519\u8BEF");
-          if (current.risk) return { stopped: null, risk: true, logisticsById, failCount };
+          let current = readLogisticsResponse(response, "\u7F51\u7EDC\u9519\u8BEF");
+          while (current.risk) {
+            const paused = await pauseForVerification(input, logger, onLog, onProgress, response && response.text);
+            if (paused === "stop") return { stopped: null, risk: true, logisticsById, failCount };
+            if (paused) return { stopped: paused, logisticsById, failCount };
+            try {
+              response = await input.fetchLogistics(orderId);
+            } catch {
+              response = null;
+            }
+            current = readLogisticsResponse(response, "\u7F51\u7EDC\u9519\u8BEF");
+          }
           let parsed = usableLogistics(current.parsed) ? current.parsed : null;
-          if (!parsed && typeof input.fetchLegacyLogistics === "function") {
+          let legacyVerifyTries = 0;
+          while (!parsed && typeof input.fetchLegacyLogistics === "function") {
             const legacy = await readLegacyLogistics(orderId, input, logger, onLog);
             if (legacy.stopped) return { stopped: legacy.stopped, logisticsById, failCount };
             if (legacy.risk) {
-              push(logger, onLog, "warn", messages2.legacyBlocked(orderId));
-              current.reason = "\u65E7\u7248\u8BA2\u5355\u8BE6\u60C5\u89E6\u53D1\u9A8C\u8BC1";
-            } else if (usableLogistics(legacy.parsed)) {
-              parsed = legacy.parsed;
-            } else {
-              current.reason = legacy.reason || current.reason;
+              legacyVerifyTries += 1;
+              if (legacyVerifyTries > 1) {
+                push(logger, onLog, "warn", messages2.legacyBlocked(orderId));
+                current.reason = "\u65E7\u7248\u8BA2\u5355\u8BE6\u60C5\u89E6\u53D1\u9A8C\u8BC1";
+                break;
+              }
+              const paused = await pauseForVerification(input, logger, onLog, onProgress, legacy.text);
+              if (paused === "stop") {
+                push(logger, onLog, "warn", messages2.legacyBlocked(orderId));
+                current.reason = "\u65E7\u7248\u8BA2\u5355\u8BE6\u60C5\u89E6\u53D1\u9A8C\u8BC1";
+                break;
+              }
+              if (paused) return { stopped: paused, logisticsById, failCount };
+              continue;
             }
+            if (usableLogistics(legacy.parsed)) parsed = legacy.parsed;
+            else current.reason = legacy.reason || current.reason;
+            break;
           }
           if (!parsed) {
             if (current.empty && typeof input.fetchLegacyLogistics !== "function") {
@@ -781,14 +974,28 @@
             onProgress(messages2.progressPage(pageNum, kept.length));
             push(logger, onLog, "info", messages2.readingPage(pageNum));
           }
+          const query = buildListQuery({
+            pageNum,
+            archive,
+            lastStartRow,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            orderStatus: orderStatus || "",
+            dateFields: input.dateFields
+          });
           const context = {
             ...contextBase,
             lastStartRow,
-            dateBegin: `${input.startDate} 00:00:00`,
-            dateEnd: `${input.endDate} 23:59:59`,
+            query,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            dateBegin: query.dateBegin || "",
+            dateEnd: query.dateEnd || "",
             orderStatus: orderStatus || ""
           };
+          if (pageNum === 1) push(logger, onLog, "info", messages2.listFilter(describeListQuery(query)));
           let classified = await readPage(input.fetchPage, pageNum, context);
+          for (const note of classified.notes || []) push(logger, onLog, "info", note);
           if (classified.type === "retryable") {
             push(logger, onLog, "warn", messages2.pageRetry(pageNum, classified.reason));
             const stopBeforeRetry = input.shouldStop();
@@ -802,7 +1009,12 @@
             return { fatal: { kind: "login", message: messages2.notLogin() } };
           }
           if (classified.type === "captcha") {
-            return { fatal: { kind: "captcha", message: messages2.captcha(kept.length) } };
+            const paused = await pauseForVerification(input, logger, onLog, onProgress, classified.body);
+            if (paused === "stop") {
+              return { fatal: { kind: "captcha", message: messages2.captcha(kept.length) } };
+            }
+            if (paused) return { stopped: paused };
+            continue;
           }
           if (classified.type === "unrecognized") {
             return { fatal: { kind: "unknown", message: messages2.unrecognized(classified.keys) } };
@@ -922,7 +1134,7 @@
         for (const entry of entries) push(logger, onLog, entry.level, entry.message);
         return logger.text();
       }
-      module.exports = { runExport: runExport2, appendDownloadLogs: appendDownloadLogs2, LOGISTICS_GAP_MS, PAGE_SIZE };
+      module.exports = { runExport: runExport2, appendDownloadLogs: appendDownloadLogs2, isLogisticsRisk, isCaptchaChallenge: isCaptchaChallenge2, LOGISTICS_GAP_MS, PAGE_SIZE };
     }
   });
 
@@ -34278,8 +34490,215 @@
     }
   });
 
+  // src/urls.js
+  var require_urls = __commonJS({
+    "src/urls.js"(exports, module) {
+      function isOrderListUrl(url) {
+        let parsed;
+        try {
+          parsed = new URL(url);
+        } catch {
+          return false;
+        }
+        const hostOk = parsed.hostname === "buyertrade.taobao.com" || parsed.hostname === "trade.taobao.com";
+        return hostOk && parsed.pathname.startsWith("/trade/itemlist/");
+      }
+      module.exports = { isOrderListUrl };
+    }
+  });
+
+  // src/popup-state.js
+  var require_popup_state = __commonJS({
+    "src/popup-state.js"(exports, module) {
+      var { isOrderListUrl } = require_urls();
+      var { messages: messages2 } = require_messages();
+      var ORDER_PAGE = "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm";
+      function popupView(state) {
+        const onOrderPage = isOrderListUrl(state.url);
+        const dateError = state.startDate > state.endDate;
+        const statusError = Array.isArray(state.statuses) && state.statuses.length === 0;
+        return {
+          showOpenPage: !onOrderPage,
+          exportDisabled: state.running ? false : !onOrderPage || dateError || statusError,
+          exportLabel: state.running ? "\u53D6\u6D88" : "\u5F00\u59CB\u5BFC\u51FA",
+          showPartial: !state.running && !!(state.result && state.result.status === "partial-ready"),
+          dateError,
+          statusError,
+          pageMessage: onOrderPage ? "" : messages2.wrongPage(),
+          orderPageUrl: ORDER_PAGE
+        };
+      }
+      module.exports = { popupView, ORDER_PAGE };
+    }
+  });
+
+  // src/page-panel.js
+  var require_page_panel = __commonJS({
+    "src/page-panel.js"(exports, module) {
+      var { defaultRange } = require_dates();
+      var { popupView } = require_popup_state();
+      var STATUS_OPTIONS = [
+        ["wait-pay", "\u5F85\u4ED8\u6B3E"],
+        ["wait-send", "\u5F85\u53D1\u8D27"],
+        ["wait-receive", "\u5F85\u6536\u8D27"],
+        ["success", "\u4EA4\u6613\u6210\u529F"],
+        ["closed", "\u4EA4\u6613\u5173\u95ED"],
+        ["refund", "\u9000\u6B3E"]
+      ];
+      function mountPagePanel2(actions) {
+        if (document.getElementById("tb-export-panel")) return null;
+        const host = document.createElement("div");
+        host.id = "tb-export-panel";
+        host.style.cssText = "all:initial;position:fixed;display:block;top:72px;right:16px;z-index:2147483646;width:380px;";
+        const shadow = host.attachShadow({ mode: "open" });
+        const style = document.createElement("style");
+        style.textContent = [
+          ":host { all: initial; }",
+          '.panel { width: 100%; font: 13px/1.4 "Segoe UI", sans-serif; color: #222; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18); overflow: hidden; }',
+          ".bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #ff5000; color: #fff; cursor: move; user-select: none; }",
+          ".bar strong { flex: 1; font-size: 14px; }",
+          ".bar button { background: transparent; color: #fff; border: 0; cursor: pointer; font-size: 16px; }",
+          ".body { max-height: 70vh; overflow: auto; padding: 10px 12px 12px; }",
+          "label, fieldset { display: block; margin: 8px 0; }",
+          "fieldset label { display: inline-block; margin: 2px 10px 2px 0; }",
+          "button.action { margin: 0 8px 8px 0; }",
+          ".error { color: #a40000; }",
+          "#log { height: 160px; overflow: auto; background: #f6f6f6; padding: 8px; white-space: pre-wrap; margin: 0; }"
+        ].join("\n");
+        const panel = document.createElement("div");
+        panel.className = "panel";
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        const title = document.createElement("strong");
+        title.textContent = "\u6DD8\u5B9D\u8BA2\u5355\u5BFC\u51FA";
+        const fold = document.createElement("button");
+        fold.type = "button";
+        fold.textContent = "\u2014";
+        bar.append(title, fold);
+        const body = document.createElement("div");
+        body.className = "body";
+        const range = defaultRange(/* @__PURE__ */ new Date());
+        body.innerHTML = [
+          '<label>\u5F00\u59CB\u65E5\u671F <input id="start-date" type="date"></label>',
+          '<label>\u7ED3\u675F\u65E5\u671F <input id="end-date" type="date"></label>',
+          '<p id="date-error" class="error" hidden>\u5F00\u59CB\u65E5\u671F\u4E0D\u80FD\u665A\u4E8E\u7ED3\u675F\u65E5\u671F</p>',
+          "<fieldset><legend>\u8BA2\u5355\u72B6\u6001</legend>",
+          STATUS_OPTIONS.map(([value, label]) => `<label><input name="status" type="checkbox" value="${value}" checked> ${label}</label>`).join(""),
+          "</fieldset>",
+          '<p id="status-error" class="error" hidden>\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u79CD\u8BA2\u5355\u72B6\u6001</p>',
+          "<fieldset><legend>\u683C\u5F0F</legend>",
+          '<label><input name="format" type="radio" value="xlsx" checked> Excel</label>',
+          '<label><input name="format" type="radio" value="csv"> CSV</label>',
+          "</fieldset>",
+          '<button id="export" class="action" type="button">\u5F00\u59CB\u5BFC\u51FA</button>',
+          '<button id="resume" class="action" type="button" hidden>\u6211\u5DF2\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u7EE7\u7EED</button>',
+          '<p id="progress"></p>',
+          '<pre id="log"></pre>'
+        ].join("");
+        panel.append(bar, body);
+        shadow.append(style, panel);
+        document.documentElement.appendChild(host);
+        const startInput = shadow.getElementById("start-date");
+        const endInput = shadow.getElementById("end-date");
+        const dateError = shadow.getElementById("date-error");
+        const statusError = shadow.getElementById("status-error");
+        const exportButton = shadow.getElementById("export");
+        const resumeButton = shadow.getElementById("resume");
+        const progress = shadow.getElementById("progress");
+        const logNode = shadow.getElementById("log");
+        startInput.value = range.startDate;
+        endInput.value = range.endDate;
+        let running2 = false;
+        let dragging = null;
+        function selectedStatuses() {
+          return Array.from(shadow.querySelectorAll('input[name="status"]:checked')).map((item) => item.value);
+        }
+        function selectedFormat() {
+          const picked = shadow.querySelector('input[name="format"]:checked');
+          return picked ? picked.value : "xlsx";
+        }
+        function render() {
+          const view = popupView({
+            url: location.href,
+            running: running2,
+            startDate: startInput.value,
+            endDate: endInput.value,
+            statuses: selectedStatuses(),
+            result: null
+          });
+          dateError.hidden = !view.dateError;
+          statusError.hidden = !view.statusError;
+          exportButton.disabled = view.exportDisabled;
+          exportButton.textContent = view.exportLabel;
+        }
+        function addLog(line) {
+          logNode.textContent = `${logNode.textContent}${line}
+`;
+          logNode.scrollTop = logNode.scrollHeight;
+        }
+        startInput.addEventListener("change", render);
+        endInput.addEventListener("change", render);
+        shadow.querySelectorAll('input[name="status"]').forEach((item) => {
+          item.addEventListener("change", render);
+        });
+        exportButton.addEventListener("click", () => {
+          if (running2) {
+            actions.onCancel();
+            return;
+          }
+          actions.onStart({
+            startDate: startInput.value,
+            endDate: endInput.value,
+            format: selectedFormat(),
+            statuses: selectedStatuses()
+          });
+        });
+        resumeButton.addEventListener("click", () => {
+          resumeButton.hidden = true;
+          actions.onResume();
+        });
+        fold.addEventListener("click", () => {
+          body.hidden = !body.hidden;
+          fold.textContent = body.hidden ? "+" : "\u2014";
+        });
+        bar.addEventListener("mousedown", (event) => {
+          if (event.target === fold) return;
+          const rect = host.getBoundingClientRect();
+          dragging = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+        });
+        window.addEventListener("mousemove", (event) => {
+          if (!dragging) return;
+          host.style.left = `${Math.max(0, event.clientX - dragging.dx)}px`;
+          host.style.top = `${Math.max(0, event.clientY - dragging.dy)}px`;
+          host.style.right = "auto";
+        });
+        window.addEventListener("mouseup", () => {
+          dragging = null;
+        });
+        render();
+        return {
+          notify(payload) {
+            if (!payload) return;
+            if (payload.type === "log") addLog(payload.line);
+            if (payload.type === "progress") progress.textContent = payload.text;
+            if (payload.type === "verify") {
+              progress.textContent = "\u9047\u5230\u9A8C\u8BC1\u3002\u5B8C\u6210\u540E\u70B9\u300C\u6211\u5DF2\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u7EE7\u7EED\u300D";
+              resumeButton.hidden = false;
+            }
+          },
+          setRunning(value) {
+            running2 = value;
+            if (!value) resumeButton.hidden = true;
+            render();
+          }
+        };
+      }
+      module.exports = { mountPagePanel: mountPagePanel2 };
+    }
+  });
+
   // src/content-entry.js
-  var { runExport, appendDownloadLogs } = require_run_export();
+  var { runExport, appendDownloadLogs, isCaptchaChallenge } = require_run_export();
   var { createLogger } = require_logger();
   var { messages } = require_messages();
   var { decodeResponseBytes } = require_decode();
@@ -34288,8 +34707,392 @@
   var { exportTable } = require_export_table();
   var { tableFilename, logFilename } = require_filenames();
   var { buildRows } = require_parse_orders();
+  var { mountPagePanel } = require_page_panel();
+  var {
+    attachToken,
+    applyPageNumber,
+    classicDatedQuery,
+    listFilterIgnored,
+    newestOrderTime,
+    parseCapturedBody
+  } = require_list_query();
+  function detectDateFields() {
+    const names = [];
+    for (const node of document.querySelectorAll("input[name], select[name]")) {
+      if (/date|time/i.test(node.name) && !names.includes(node.name)) names.push(node.name);
+    }
+    return names;
+  }
+  function readTbToken() {
+    const input = document.querySelector('input[name="_tb_token_"]');
+    if (input && input.value) return input.value;
+    const meta = document.querySelector('meta[name="_tb_token_"], meta[name="csrf-token"]');
+    if (meta && meta.content) return meta.content;
+    const cookie = document.cookie.match(/(?:^|;\s*)_tb_token_=([^;]+)/);
+    if (cookie) return decodeURIComponent(cookie[1]);
+    const fromHtml = document.documentElement.innerHTML.match(/_tb_token_["'\s:=]+([A-Za-z0-9]{6,})/);
+    if (fromHtml) return fromHtml[1];
+    const node = document.createElement("meta");
+    node.id = "tb-export-token";
+    document.documentElement.appendChild(node);
+    const script = document.createElement("script");
+    script.textContent = `(function(){
+    var token = '';
+    try {
+      if (window.g_config && window.g_config.token) token = window.g_config.token;
+      else if (window.token) token = window.token;
+    } catch (e) {}
+    var node = document.getElementById('tb-export-token');
+    if (node) node.setAttribute('content', token || '');
+  })();`;
+    document.documentElement.appendChild(script);
+    script.remove();
+    const token = node.getAttribute("content") || "";
+    node.remove();
+    return token;
+  }
+  function installListCapture() {
+    if (document.getElementById("tb-export-capture")) return;
+    const box = document.createElement("textarea");
+    box.id = "tb-export-capture";
+    box.hidden = true;
+    document.documentElement.appendChild(box);
+    const script = document.createElement("script");
+    script.textContent = `(function(){
+    if (window.__tbExportHook) return;
+    window.__tbExportHook = true;
+    function publish(url, body) {
+      if (!window.__tbExportWatch) return;
+      if (!/asyncBought|BoughtQuery|querybought|order\\.list/i.test(String(url || ''))) return;
+      var box = document.getElementById('tb-export-capture');
+      if (!box) return;
+      var text = typeof body === 'string' ? body : (body && body.toString ? body.toString() : '');
+      box.value = JSON.stringify({ url: String(url || ''), body: text });
+      box.dispatchEvent(new Event('change'));
+    }
+    var orig = window.fetch;
+    if (typeof orig === 'function') {
+      window.fetch = function(input, init) {
+        try {
+          var url = typeof input === 'string' ? input : (input && input.url) || '';
+          publish(url, init && init.body);
+        } catch (e) {}
+        return orig.apply(this, arguments);
+      };
+    }
+    var xhrOpen = XMLHttpRequest.prototype.open;
+    var xhrSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this.__tbUrl = url;
+      return xhrOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function(body) {
+      try { publish(this.__tbUrl || '', body); } catch (e) {}
+      return xhrSend.apply(this, arguments);
+    };
+  })();`;
+    document.documentElement.appendChild(script);
+    script.remove();
+  }
+  function setCaptureWatch(on) {
+    const script = document.createElement("script");
+    script.textContent = `window.__tbExportWatch = ${on ? "true" : "false"};`;
+    document.documentElement.appendChild(script);
+    script.remove();
+  }
+  function setInputValue(input, value) {
+    const prototype = Object.getPrototypeOf(input);
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value") || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    if (setter && setter.set) setter.set.call(input, value);
+    else input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function findRangeInputs() {
+    const inputs = [...document.querySelectorAll("input")].filter((input) => {
+      const rect = input.getBoundingClientRect();
+      return rect.width > 20 && rect.height > 10 && input.type !== "hidden" && input.type !== "checkbox" && input.type !== "radio";
+    });
+    const start = inputs.find((input) => /开始|起始/.test(`${input.placeholder || ""} ${input.getAttribute("aria-label") || ""}`));
+    const end = inputs.find((input) => /结束|截止/.test(`${input.placeholder || ""} ${input.getAttribute("aria-label") || ""}`));
+    if (start && end) return [start, end];
+    return null;
+  }
+  function clickSearch() {
+    const nodes = [...document.querySelectorAll("button, a, span")];
+    const target = nodes.find((node) => {
+      const text = (node.innerText || "").trim();
+      if (text !== "\u641C\u7D22" && text !== "\u7B5B\u9009" && text !== "\u786E\u5B9A") return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.width < 240;
+    });
+    if (!target) return false;
+    target.click();
+    return true;
+  }
+  function waitForCapture(ms) {
+    const box = document.getElementById("tb-export-capture");
+    if (!box) return Promise.resolve("");
+    if (box.value) return Promise.resolve(box.value);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        box.removeEventListener("change", onChange);
+        resolve(box.value || "");
+      }, ms);
+      function onChange() {
+        clearTimeout(timer);
+        box.removeEventListener("change", onChange);
+        resolve(box.value || "");
+      }
+      box.addEventListener("change", onChange);
+    });
+  }
+  function openVerifyPage(url) {
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      if (parsed.protocol !== "https:") return;
+      if (!host.endsWith("taobao.com") && !host.endsWith("tmall.com")) return;
+      window.open(parsed.href, "_blank", "noopener");
+    } catch {
+      return;
+    }
+  }
+  function showVerifyBanner(onContinue, verifyUrl) {
+    const previous = document.getElementById("tb-export-verify");
+    if (previous) previous.remove();
+    const box = document.createElement("div");
+    box.id = "tb-export-verify";
+    box.style.cssText = 'position:fixed;z-index:2147483647;top:16px;left:16px;right:16px;background:#fff8e8;border:2px solid #e6a100;padding:14px 16px;font:14px/1.5 "Segoe UI",sans-serif;color:#222;box-shadow:0 6px 20px rgba(0,0,0,.18)';
+    const text = document.createElement("div");
+    text.textContent = "\u9047\u5230\u9A8C\u8BC1\uFF0C\u5BFC\u51FA\u5DF2\u6682\u505C\u3002\u8BF7\u5148\u5728\u672C\u9875\u6216\u9A8C\u8BC1\u9875\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u518D\u70B9\u300C\u7EE7\u7EED\u5BFC\u51FA\u300D\u3002\u4E0D\u8981\u5173\u95ED\u8FD9\u4E2A\u8BA2\u5355\u9875\u3002";
+    const actions = document.createElement("div");
+    actions.style.marginTop = "10px";
+    if (verifyUrl) {
+      const open = document.createElement("button");
+      open.type = "button";
+      open.textContent = "\u6253\u5F00\u9A8C\u8BC1\u9875";
+      open.style.marginRight = "8px";
+      open.addEventListener("click", () => openVerifyPage(verifyUrl));
+      actions.appendChild(open);
+    }
+    const go = document.createElement("button");
+    go.type = "button";
+    go.textContent = "\u7EE7\u7EED\u5BFC\u51FA";
+    go.addEventListener("click", onContinue);
+    actions.appendChild(go);
+    box.appendChild(text);
+    box.appendChild(actions);
+    document.documentElement.appendChild(box);
+  }
+  function removeVerifyBanner() {
+    const box = document.getElementById("tb-export-verify");
+    if (box) box.remove();
+  }
+  function listUrlWith(query, datesInUrl) {
+    const url = new URL(listUrl());
+    if (query._tb_token_) url.searchParams.set("_tb_token_", query._tb_token_);
+    if (datesInUrl) {
+      for (const key of ["dateBegin", "dateEnd", "orderStatus", "queryMore", "tabCode"]) {
+        if (query[key]) url.searchParams.set(key, query[key]);
+      }
+    }
+    return url.toString();
+  }
+  async function postList(query, datesInUrl) {
+    const response = await fetch(listUrlWith(query, datesInUrl), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        Accept: "application/json, text/javascript, */*; q=0.01"
+      },
+      body: new URLSearchParams(query)
+    });
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: decodeResponseBytes(bytes, response.headers.get("content-type"))
+    };
+  }
+  async function captureOfficialSearch(startDate, endDate) {
+    const inputs = findRangeInputs();
+    if (!inputs) return null;
+    installListCapture();
+    const box = document.getElementById("tb-export-capture");
+    if (box) box.value = "";
+    setCaptureWatch(true);
+    setInputValue(inputs[0], startDate);
+    setInputValue(inputs[1], endDate);
+    if (!clickSearch()) {
+      setCaptureWatch(false);
+      return null;
+    }
+    const raw = await waitForCapture(2500);
+    setCaptureWatch(false);
+    if (!raw) return null;
+    let captured;
+    try {
+      captured = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    const query = parseCapturedBody(captured.body);
+    if (!query) return null;
+    return postList(query, false).then((response) => ({ query, response }));
+  }
+  async function learnListRequest(context) {
+    const token = readTbToken();
+    const notes = [token ? messages.tokenAttached() : messages.tokenMissing()];
+    const endDate = context.endDate || "";
+    const startDate = context.startDate || "";
+    const firstQuery = attachToken({ ...context.query || {} }, token);
+    const first = await postList(firstQuery, false);
+    if (!listFilterIgnored(first.text, endDate)) {
+      return { archive: !!context.archive, query: firstQuery, datesInUrl: false, notes, response: first };
+    }
+    notes.push(messages.filterIgnored(newestOrderTime(first.text)));
+    const dated = attachToken(classicDatedQuery({
+      pageNum: context.query && context.query.pageNum,
+      startDate,
+      endDate,
+      orderStatus: context.orderStatus,
+      archive: context.archive,
+      lastStartRow: context.lastStartRow
+    }), token);
+    const second = await postList(dated, true);
+    if (!listFilterIgnored(second.text, endDate)) {
+      notes.push(messages.filterDatetime());
+      return { archive: !!context.archive, query: dated, datesInUrl: true, notes, response: second };
+    }
+    const captured = await captureOfficialSearch(startDate, endDate);
+    if (captured && !listFilterIgnored(captured.response.text, endDate)) {
+      notes.push(messages.filterFromPage());
+      return {
+        archive: !!context.archive,
+        query: captured.query,
+        datesInUrl: false,
+        notes,
+        response: captured.response
+      };
+    }
+    notes.push(messages.filterLocal());
+    return { archive: !!context.archive, query: firstQuery, datesInUrl: false, notes, response: first };
+  }
   var LIST_PATH = "/trade/itemlist/asyncBought.htm?action=itemlist/BoughtQueryAction&event_submit_do_query=1&_input_charset=utf8";
   var running = false;
+  var learnedList = null;
+  var stopKind = null;
+  var resumeVerification = () => {
+  };
+  var pagePanel = null;
+  var activePort = null;
+  var portDisconnected = true;
+  function publish(payload) {
+    if (pagePanel) pagePanel.notify(payload);
+    if (!activePort || portDisconnected) return;
+    try {
+      activePort.postMessage(payload);
+    } catch {
+      portDisconnected = true;
+    }
+  }
+  async function startExport(message, fromPopup) {
+    if (running) return;
+    running = true;
+    learnedList = null;
+    stopKind = null;
+    if (pagePanel) pagePanel.setRunning(true);
+    function waitForVerification(verifyUrl) {
+      publish({ type: "verify" });
+      return new Promise((resolve) => {
+        let settled = false;
+        const timer = setInterval(() => {
+          if (stopKind === "cancel") finish("cancel");
+        }, 400);
+        function finish(value) {
+          if (settled) return;
+          settled = true;
+          clearInterval(timer);
+          removeVerifyBanner();
+          resumeVerification = () => {
+          };
+          resolve(value);
+        }
+        resumeVerification = () => finish(null);
+        showVerifyBanner(() => finish(null), verifyUrl);
+      });
+    }
+    try {
+      const result = await runExport({
+        startDate: message.startDate,
+        endDate: message.endDate,
+        format: message.format,
+        statuses: message.statuses,
+        dateFields: detectDateFields(),
+        fetchPage,
+        fetchLogistics,
+        fetchLegacyLogistics,
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        shouldStop: () => stopKind,
+        waitForVerification,
+        now: () => /* @__PURE__ */ new Date(),
+        onProgress(text) {
+          publish({ type: "progress", text });
+        },
+        onLog(line) {
+          publish({ type: "log", line });
+        }
+      });
+      const popupOpen = fromPopup && activePort && !portDisconnected;
+      if (popupOpen) {
+        try {
+          activePort.postMessage({ type: "result", result });
+        } catch {
+          deliverFiles(result, message);
+        }
+      } else {
+        deliverFiles(result, message);
+      }
+    } finally {
+      removeVerifyBanner();
+      running = false;
+      if (pagePanel) pagePanel.setRunning(false);
+    }
+  }
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "tb-order-export") return;
+    activePort = port;
+    portDisconnected = false;
+    port.onDisconnect.addListener(() => {
+      if (activePort === port) portDisconnected = true;
+    });
+    port.onMessage.addListener((message) => {
+      if (message.type === "cancel") {
+        stopKind = "cancel";
+        return;
+      }
+      if (message.type === "continue") {
+        resumeVerification();
+        return;
+      }
+      if (message.type !== "start") return;
+      startExport(message, true);
+    });
+  });
+  pagePanel = mountPagePanel({
+    onStart(options) {
+      startExport(options, false);
+    },
+    onCancel() {
+      stopKind = "cancel";
+    },
+    onResume() {
+      resumeVerification();
+    }
+  });
   function tradeOrigin() {
     const host = location.hostname;
     if (host === "buyertrade.taobao.com" || host === "trade.taobao.com") return location.origin;
@@ -34313,35 +35116,20 @@
     setTimeout(() => URL.revokeObjectURL(url), 1e3);
   }
   async function fetchPage(pageNum, context = {}) {
-    const body = new URLSearchParams({
-      pageNum: String(pageNum),
-      pageSize: "15",
-      prePageNo: String(Math.max(pageNum - 1, 0))
-    });
-    if (context.archive) {
-      body.set("tabCode", "before3Months");
-      if (context.lastStartRow) body.set("lastStartRow", context.lastStartRow);
+    if (!learnedList || learnedList.archive !== !!context.archive) {
+      learnedList = await learnListRequest(context);
+      if (Number(pageNum) === 1 && learnedList.response) {
+        return { ...learnedList.response, notes: learnedList.notes };
+      }
     }
-    if (context.dateBegin) body.set("dateBegin", context.dateBegin);
-    if (context.dateEnd) body.set("dateEnd", context.dateEnd);
-    if (context.orderStatus) body.set("orderStatus", context.orderStatus);
-    const response = await fetch(listUrl(), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-      body
-    });
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return {
-      ok: response.ok,
-      status: response.status,
-      text: decodeResponseBytes(bytes, response.headers.get("content-type"))
-    };
+    const query = applyPageNumber(learnedList.query, pageNum);
+    return postList(query, learnedList.datesInUrl);
   }
   function detailPageUrls(orderId) {
     const id = encodeURIComponent(orderId);
     return [
       `https://trade.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
+      `https://trade.tmall.com/detail/orderDetail.htm?biz_order_id=${id}`,
       `https://buyertrade.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`,
       `https://tradearchive.taobao.com/trade/detail/trade_item_detail.htm?biz_order_id=${id}`,
       `https://tradearchive.taobao.com/trade/detail/trade_order_detail.htm?biz_order_id=${id}`
@@ -34352,11 +35140,12 @@
       type: "fetch-legacy-logistics",
       url
     });
-    if (!response) return { ok: false, status: 0, text: "" };
+    if (!response) return { ok: false, status: 0, text: "", error: "\u65E0\u54CD\u5E94" };
     const bytes = new Uint8Array(response.bytes || []);
     return {
       ok: response.ok,
       status: response.status,
+      error: response.error || "",
       text: decodeResponseBytes(bytes, response.contentType)
     };
   }
@@ -34366,15 +35155,16 @@
   }
   async function fetchLegacyLogistics(orderId) {
     const urls = detailPageUrls(orderId);
-    let last = { ok: false, status: 0, text: "" };
+    let last = { ok: false, status: 0, text: "", error: "" };
+    let sawCaptcha = false;
     for (const url of urls) {
       const page = await requestLegacyPage(url);
       last = page;
       const text = page.text || "";
-      const blocked = text.includes("_____tmd_____") || text.includes("x5secdata") || text.includes("rgv587_flag");
-      if (blocked && !text.includes("\u7269\u6D41\u516C\u53F8") && !text.includes("\u8FD0\u5355\u53F7")) continue;
       if (page.ok && pageHasWaybill(text)) return page;
+      if (isCaptchaChallenge(text)) sawCaptcha = true;
     }
+    if (sawCaptcha) return { ...last, blocked: true };
     return last;
   }
   async function fetchLogistics(orderId) {
@@ -34432,62 +35222,6 @@
     }
     downloadLogFile(result.logText, before, []);
   }
-  chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== "tb-order-export") return;
-    let stopKind = null;
-    let disconnected = false;
-    port.onDisconnect.addListener(() => {
-      disconnected = true;
-    });
-    port.onMessage.addListener(async (message) => {
-      if (message.type === "cancel") {
-        stopKind = "cancel";
-        return;
-      }
-      if (message.type !== "start" || running) return;
-      running = true;
-      stopKind = null;
-      function postToPopup(payload) {
-        if (disconnected) return;
-        try {
-          port.postMessage(payload);
-        } catch {
-          disconnected = true;
-        }
-      }
-      try {
-        const result = await runExport({
-          startDate: message.startDate,
-          endDate: message.endDate,
-          format: message.format,
-          statuses: message.statuses,
-          fetchPage,
-          fetchLogistics,
-          fetchLegacyLogistics,
-          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-          shouldStop: () => stopKind,
-          now: () => /* @__PURE__ */ new Date(),
-          onProgress(text) {
-            postToPopup({ type: "progress", text });
-          },
-          onLog(line) {
-            postToPopup({ type: "log", line });
-          }
-        });
-        if (disconnected) {
-          deliverFiles(result, message);
-          return;
-        }
-        try {
-          port.postMessage({ type: "result", result });
-        } catch {
-          deliverFiles(result, message);
-        }
-      } finally {
-        running = false;
-      }
-    });
-  });
 })();
 /*! Bundled license information:
 

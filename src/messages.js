@@ -32,6 +32,27 @@ const messages = {
   dateSearch(startDate, endDate) {
     return `按成交时间搜索：${startDate} 00:00:00 至 ${endDate} 23:59:59`;
   },
+  listFilter(summary) {
+    return `列表筛选参数：${summary}`;
+  },
+  tokenAttached() {
+    return '已附带页面令牌提交时间筛选';
+  },
+  tokenMissing() {
+    return '页面上没有读到筛选令牌';
+  },
+  filterIgnored(time) {
+    return `纯日期筛选未生效，第 1 页最新订单仍是 ${time}`;
+  },
+  filterDatetime() {
+    return '已改用旧版日期时间提交，服务端开始按时间筛选';
+  },
+  filterFromPage() {
+    return '已改用页面上的搜索请求';
+  },
+  filterLocal() {
+    return '页面搜索也没有按时间筛到，继续在本地跳过范围外的订单';
+  },
   officialStatus(label, code) {
     return `按订单状态搜索：${label}（${code}）`;
   },
@@ -58,6 +79,12 @@ const messages = {
   },
   captcha(orderCount) {
     return `触发验证码或风控，已停止。请在订单页完成验证后再导出。已获取 ${orderCount} 笔订单`;
+  },
+  needVerify() {
+    return '遇到验证，导出已暂停。请在订单页完成验证，然后点击「继续导出」';
+  },
+  verifyContinue() {
+    return '已确认验证通过，继续导出';
   },
   unrecognized(keys) {
     return `订单接口返回无法识别，已停止。响应字段：${keys}`;

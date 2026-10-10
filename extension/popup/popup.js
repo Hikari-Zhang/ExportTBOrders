@@ -118,6 +118,27 @@
         dateSearch(startDate, endDate) {
           return `\u6309\u6210\u4EA4\u65F6\u95F4\u641C\u7D22\uFF1A${startDate} 00:00:00 \u81F3 ${endDate} 23:59:59`;
         },
+        listFilter(summary) {
+          return `\u5217\u8868\u7B5B\u9009\u53C2\u6570\uFF1A${summary}`;
+        },
+        tokenAttached() {
+          return "\u5DF2\u9644\u5E26\u9875\u9762\u4EE4\u724C\u63D0\u4EA4\u65F6\u95F4\u7B5B\u9009";
+        },
+        tokenMissing() {
+          return "\u9875\u9762\u4E0A\u6CA1\u6709\u8BFB\u5230\u7B5B\u9009\u4EE4\u724C";
+        },
+        filterIgnored(time) {
+          return `\u7EAF\u65E5\u671F\u7B5B\u9009\u672A\u751F\u6548\uFF0C\u7B2C 1 \u9875\u6700\u65B0\u8BA2\u5355\u4ECD\u662F ${time}`;
+        },
+        filterDatetime() {
+          return "\u5DF2\u6539\u7528\u65E7\u7248\u65E5\u671F\u65F6\u95F4\u63D0\u4EA4\uFF0C\u670D\u52A1\u7AEF\u5F00\u59CB\u6309\u65F6\u95F4\u7B5B\u9009";
+        },
+        filterFromPage() {
+          return "\u5DF2\u6539\u7528\u9875\u9762\u4E0A\u7684\u641C\u7D22\u8BF7\u6C42";
+        },
+        filterLocal() {
+          return "\u9875\u9762\u641C\u7D22\u4E5F\u6CA1\u6709\u6309\u65F6\u95F4\u7B5B\u5230\uFF0C\u7EE7\u7EED\u5728\u672C\u5730\u8DF3\u8FC7\u8303\u56F4\u5916\u7684\u8BA2\u5355";
+        },
         officialStatus(label, code) {
           return `\u6309\u8BA2\u5355\u72B6\u6001\u641C\u7D22\uFF1A${label}\uFF08${code}\uFF09`;
         },
@@ -144,6 +165,12 @@
         },
         captcha(orderCount) {
           return `\u89E6\u53D1\u9A8C\u8BC1\u7801\u6216\u98CE\u63A7\uFF0C\u5DF2\u505C\u6B62\u3002\u8BF7\u5728\u8BA2\u5355\u9875\u5B8C\u6210\u9A8C\u8BC1\u540E\u518D\u5BFC\u51FA\u3002\u5DF2\u83B7\u53D6 ${orderCount} \u7B14\u8BA2\u5355`;
+        },
+        needVerify() {
+          return "\u9047\u5230\u9A8C\u8BC1\uFF0C\u5BFC\u51FA\u5DF2\u6682\u505C\u3002\u8BF7\u5728\u8BA2\u5355\u9875\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u7136\u540E\u70B9\u51FB\u300C\u7EE7\u7EED\u5BFC\u51FA\u300D";
+        },
+        verifyContinue() {
+          return "\u5DF2\u786E\u8BA4\u9A8C\u8BC1\u901A\u8FC7\uFF0C\u7EE7\u7EED\u5BFC\u51FA";
         },
         unrecognized(keys) {
           return `\u8BA2\u5355\u63A5\u53E3\u8FD4\u56DE\u65E0\u6CD5\u8BC6\u522B\uFF0C\u5DF2\u505C\u6B62\u3002\u54CD\u5E94\u5B57\u6BB5\uFF1A${keys}`;
@@ -33732,6 +33759,7 @@
   var dateError = document.getElementById("date-error");
   var statusError = document.getElementById("status-error");
   var exportButton = document.getElementById("export");
+  var resumeButton = document.getElementById("resume");
   var partialButton = document.getElementById("partial");
   var progress = document.getElementById("progress");
   var logNode = document.getElementById("log");
@@ -33839,6 +33867,7 @@
     logger.lines.length = 0;
     lastResult = null;
     resultReceived = false;
+    resumeButton.hidden = true;
     savedStartDate = startInput.value;
     savedEndDate = endInput.value;
     savedFormat = selectedFormat();
@@ -33851,9 +33880,14 @@
         render();
       } else if (message.type === "progress") {
         progress.textContent = message.text;
+      } else if (message.type === "verify") {
+        progress.textContent = "\u9047\u5230\u9A8C\u8BC1\u3002\u8BF7\u5728\u8BA2\u5355\u9875\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u518D\u70B9\u8BA2\u5355\u9875\u6216\u8FD9\u91CC\u7684\u300C\u7EE7\u7EED\u5BFC\u51FA\u300D";
+        resumeButton.hidden = false;
+        render();
       } else if (message.type === "result") {
         resultReceived = true;
         running = false;
+        resumeButton.hidden = true;
         lastResult = message.result;
         progress.textContent = "";
         try {
@@ -33894,6 +33928,11 @@
       format: savedFormat,
       statuses
     });
+  });
+  resumeButton.addEventListener("click", () => {
+    if (port) port.postMessage({ type: "continue" });
+    resumeButton.hidden = true;
+    progress.textContent = "\u7EE7\u7EED\u5BFC\u51FA";
   });
   partialButton.addEventListener("click", () => {
     if (!lastResult || lastResult.status !== "partial-ready") return;

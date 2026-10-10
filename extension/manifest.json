@@ -13,7 +13,10 @@
   "host_permissions": [
     "https://buyertrade.taobao.com/*",
     "https://trade.taobao.com/*",
-    "https://tradearchive.taobao.com/*"
+    "https://tradearchive.taobao.com/*",
+    "https://trade.tmall.com/*",
+    "https://detail.tmall.com/*",
+    "https://buy.tmall.com/*"
   ],
   "content_scripts": [
     {

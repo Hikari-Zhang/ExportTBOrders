@@ -1,4 +1,5 @@
 const { messages } = require('./messages');
+const { buildListQuery, describeListQuery } = require('./list-query');
 const { createLogger } = require('./logger');
 const { classifyTime, isBeforeThreeMonths } = require('./dates');
 const { matchesStatus, statusLabel, labelForOfficialStatus, officialOrderStatuses } = require('./order-status');
@@ -34,6 +35,26 @@ function looksLikeLogisticsPage(body) {
     || body.includes('expressName');
 }
 
+function looksLikeOrderPage(body) {
+  return body.includes('订单编号')
+    || body.includes('成交时间')
+    || body.includes('实付款')
+    || body.includes('物流公司')
+    || body.includes('运单号')
+    || body.includes('运单号码')
+    || body.includes('快递单号');
+}
+
+function isCaptchaChallenge(text) {
+  const body = text == null ? '' : String(text);
+  if (!body.trim() || looksLikeOrderPage(body) || looksLikeLogisticsPage(body)) return false;
+  return body.includes('_____tmd_____')
+    || body.includes('FAIL_SYS_USER_VALIDATE')
+    || body.includes('请完成验证')
+    || body.includes('滑动验证')
+    || body.includes('安全验证');
+}
+
 function isLogisticsRisk(text) {
   const body = text == null ? '' : String(text);
   let json = null;
@@ -50,9 +71,8 @@ function isLogisticsRisk(text) {
       || !!(json.url || json.rgv587_flag);
   }
   return body.includes('_____tmd_____')
-    || body.includes('x5secdata')
-    || body.includes('rgv587_flag')
-    || body.includes('FAIL_SYS_USER_VALIDATE');
+    || body.includes('FAIL_SYS_USER_VALIDATE')
+    || body.includes('rgv587_flag');
 }
 
 function listCursor(text) {
@@ -75,7 +95,12 @@ async function readPage(fetchPage, pageNum, context) {
       return { type: 'retryable', reason: `HTTP ${status}` };
     }
     const classified = classifyListResponse(response.text);
-    return { ...classified, lastStartRow: listCursor(response.text) };
+    return {
+      ...classified,
+      lastStartRow: listCursor(response.text),
+      notes: response.notes || [],
+      body: response.text,
+    };
   } catch {
     return { type: 'retryable', reason: '网络错误' };
   }
@@ -94,6 +119,26 @@ function stopWith(kind, message, kept, logger, onLog) {
   push(logger, onLog, 'error', message);
   if (kept.length > 0) return resultOf('partial-ready', [], logger, kept.length, kept, {});
   return resultOf('stopped', [], logger, 0, [], {});
+}
+
+function verificationUrl(text) {
+  try {
+    const json = JSON.parse(text);
+    if (json && typeof json.url === 'string' && json.url.startsWith('https://')) return json.url;
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+async function pauseForVerification(input, logger, onLog, onProgress, text) {
+  if (typeof input.waitForVerification !== 'function') return 'stop';
+  push(logger, onLog, 'warn', messages.needVerify());
+  onProgress(messages.needVerify());
+  const stop = await input.waitForVerification(verificationUrl(text));
+  if (stop) return stop;
+  push(logger, onLog, 'info', messages.verifyContinue());
+  return null;
 }
 
 function usableLogistics(parsed) {
@@ -148,7 +193,9 @@ async function readLegacyLogistics(orderId, input, logger, onLog) {
   } catch {
     return { reason: '旧版物流页网络错误' };
   }
-  if (response && isLogisticsRisk(response.text)) return { risk: true };
+  if (response && response.blocked && isCaptchaChallenge(response.text)) {
+    return { risk: true, text: response.text || '' };
+  }
   if (!response || response.ok === false) {
     const statusCode = response && response.status ? response.status : 0;
     return { reason: `旧版物流页 HTTP ${statusCode}` };
@@ -186,20 +233,42 @@ async function queryLogistics(kept, input, logger, onLog, onProgress) {
     } catch {
       response = null;
     }
-    const current = readLogisticsResponse(response, '网络错误');
-    if (current.risk) return { stopped: null, risk: true, logisticsById, failCount };
+    let current = readLogisticsResponse(response, '网络错误');
+    while (current.risk) {
+      const paused = await pauseForVerification(input, logger, onLog, onProgress, response && response.text);
+      if (paused === 'stop') return { stopped: null, risk: true, logisticsById, failCount };
+      if (paused) return { stopped: paused, logisticsById, failCount };
+      try {
+        response = await input.fetchLogistics(orderId);
+      } catch {
+        response = null;
+      }
+      current = readLogisticsResponse(response, '网络错误');
+    }
     let parsed = usableLogistics(current.parsed) ? current.parsed : null;
-    if (!parsed && typeof input.fetchLegacyLogistics === 'function') {
+    let legacyVerifyTries = 0;
+    while (!parsed && typeof input.fetchLegacyLogistics === 'function') {
       const legacy = await readLegacyLogistics(orderId, input, logger, onLog);
       if (legacy.stopped) return { stopped: legacy.stopped, logisticsById, failCount };
       if (legacy.risk) {
-        push(logger, onLog, 'warn', messages.legacyBlocked(orderId));
-        current.reason = '旧版订单详情触发验证';
-      } else if (usableLogistics(legacy.parsed)) {
-        parsed = legacy.parsed;
-      } else {
-        current.reason = legacy.reason || current.reason;
+        legacyVerifyTries += 1;
+        if (legacyVerifyTries > 1) {
+          push(logger, onLog, 'warn', messages.legacyBlocked(orderId));
+          current.reason = '旧版订单详情触发验证';
+          break;
+        }
+        const paused = await pauseForVerification(input, logger, onLog, onProgress, legacy.text);
+        if (paused === 'stop') {
+          push(logger, onLog, 'warn', messages.legacyBlocked(orderId));
+          current.reason = '旧版订单详情触发验证';
+          break;
+        }
+        if (paused) return { stopped: paused, logisticsById, failCount };
+        continue;
       }
+      if (usableLogistics(legacy.parsed)) parsed = legacy.parsed;
+      else current.reason = legacy.reason || current.reason;
+      break;
     }
     if (!parsed) {
       if (current.empty && typeof input.fetchLegacyLogistics !== 'function') {
@@ -231,14 +300,28 @@ async function pageThrough(input, logger, onLog, onProgress, kept, seen, archive
       onProgress(messages.progressPage(pageNum, kept.length));
       push(logger, onLog, 'info', messages.readingPage(pageNum));
     }
+    const query = buildListQuery({
+      pageNum,
+      archive,
+      lastStartRow,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      orderStatus: orderStatus || '',
+      dateFields: input.dateFields,
+    });
     const context = {
       ...contextBase,
       lastStartRow,
-      dateBegin: `${input.startDate} 00:00:00`,
-      dateEnd: `${input.endDate} 23:59:59`,
+      query,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      dateBegin: query.dateBegin || '',
+      dateEnd: query.dateEnd || '',
       orderStatus: orderStatus || '',
     };
+    if (pageNum === 1) push(logger, onLog, 'info', messages.listFilter(describeListQuery(query)));
     let classified = await readPage(input.fetchPage, pageNum, context);
+    for (const note of classified.notes || []) push(logger, onLog, 'info', note);
     if (classified.type === 'retryable') {
       push(logger, onLog, 'warn', messages.pageRetry(pageNum, classified.reason));
       const stopBeforeRetry = input.shouldStop();
@@ -252,7 +335,12 @@ async function pageThrough(input, logger, onLog, onProgress, kept, seen, archive
       return { fatal: { kind: 'login', message: messages.notLogin() } };
     }
     if (classified.type === 'captcha') {
-      return { fatal: { kind: 'captcha', message: messages.captcha(kept.length) } };
+      const paused = await pauseForVerification(input, logger, onLog, onProgress, classified.body);
+      if (paused === 'stop') {
+        return { fatal: { kind: 'captcha', message: messages.captcha(kept.length) } };
+      }
+      if (paused) return { stopped: paused };
+      continue;
     }
     if (classified.type === 'unrecognized') {
       return { fatal: { kind: 'unknown', message: messages.unrecognized(classified.keys) } };
@@ -375,4 +463,4 @@ function appendDownloadLogs(logger, onLog, entries) {
   return logger.text();
 }
 
-module.exports = { runExport, appendDownloadLogs, LOGISTICS_GAP_MS, PAGE_SIZE };
+module.exports = { runExport, appendDownloadLogs, isLogisticsRisk, isCaptchaChallenge, LOGISTICS_GAP_MS, PAGE_SIZE };

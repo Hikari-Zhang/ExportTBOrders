@@ -15,6 +15,8 @@ test('每条日志文案与设计说明一致', () => {
   assert.equal(messages.pageFail(3, 'HTTP 500', 15), '第 3 页重试后仍失败，已停止翻页。原因：HTTP 500。已获取 15 笔订单');
   assert.equal(messages.notLogin(), '未登录或登录已失效，已停止');
   assert.equal(messages.captcha(15), '触发验证码或风控，已停止。请在订单页完成验证后再导出。已获取 15 笔订单');
+  assert.equal(messages.needVerify(), '遇到验证，导出已暂停。请在订单页完成验证，然后点击「继续导出」');
+  assert.equal(messages.verifyContinue(), '已确认验证通过，继续导出');
   assert.equal(messages.unrecognized('url,token'), '订单接口返回无法识别，已停止。响应字段：url,token');
   assert.equal(messages.noOrders(), '时间范围内没有订单，未下载表格');
   assert.equal(messages.missingField('100', '店铺'), '订单 100 缺少店铺，该列留空');
@@ -26,6 +28,8 @@ test('每条日志文案与设计说明一致', () => {
   assert.equal(messages.skipStatus('100', '交易成功'), '订单 100 状态为「交易成功」，不在所选状态中，已跳过');
   assert.equal(messages.statusFilter('待付款、交易成功'), '导出所选状态：待付款、交易成功');
   assert.equal(messages.dateSearch('2025-01-01', '2025-02-01'), '按成交时间搜索：2025-01-01 00:00:00 至 2025-02-01 23:59:59');
+  assert.equal(messages.listFilter('dateBegin=2025-01-01，queryMore=true'), '列表筛选参数：dateBegin=2025-01-01，queryMore=true');
+  assert.equal(messages.filterIgnored('2026-10-10 08:30:18'), '纯日期筛选未生效，第 1 页最新订单仍是 2026-10-10 08:30:18');
   assert.equal(messages.officialStatus('交易成功', 'TRADE_FINISHED'), '按订单状态搜索：交易成功（TRADE_FINISHED）');
   assert.equal(messages.logisticsWithTrace('100', '中通', 'ZT1', '已签收'), '订单 100 物流：中通 ZT1 已签收');
   assert.equal(messages.logisticsNoTrace('100', '中通', 'ZT1'), '订单 100 物流：中通 ZT1，无轨迹');
