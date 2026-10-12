@@ -6,7 +6,7 @@ const { matchesStatus, statusLabel, labelForOfficialStatus, officialOrderStatuse
 const { needsLogistics, buildRows } = require('./parse-orders');
 const { parseLogisticsBody } = require('./parse-logistics');
 const { parseLegacyLogistics } = require('./parse-legacy-logistics');
-const { classifyListResponse } = require('./classify-response');
+const { classifyListResponse, hasSliderPrompt } = require('./classify-response');
 
 const PAGE_SIZE = 15;
 const LOGISTICS_GAP_MS = 400;
@@ -48,11 +48,9 @@ function looksLikeOrderPage(body) {
 function isCaptchaChallenge(text) {
   const body = text == null ? '' : String(text);
   if (!body.trim() || looksLikeOrderPage(body) || looksLikeLogisticsPage(body)) return false;
-  return body.includes('_____tmd_____')
-    || body.includes('FAIL_SYS_USER_VALIDATE')
-    || body.includes('请完成验证')
-    || body.includes('滑动验证')
-    || body.includes('安全验证');
+  return hasSliderPrompt(body)
+    || body.includes('_____tmd_____')
+    || body.includes('FAIL_SYS_USER_VALIDATE');
 }
 
 function isLogisticsRisk(text) {
@@ -70,7 +68,8 @@ function isLogisticsRisk(text) {
       || body.includes('FAIL_SYS_USER_VALIDATE')
       || !!(json.url || json.rgv587_flag);
   }
-  return body.includes('_____tmd_____')
+  return hasSliderPrompt(body)
+    || body.includes('_____tmd_____')
     || body.includes('FAIL_SYS_USER_VALIDATE')
     || body.includes('rgv587_flag');
 }
@@ -205,8 +204,8 @@ async function readLegacyLogistics(orderId, input, logger, onLog) {
   return { parsed };
 }
 
-async function queryLogistics(kept, input, logger, onLog, onProgress) {
-  const logisticsById = {};
+async function queryLogistics(kept, input, logger, onLog, onProgress, initialLogistics) {
+  const logisticsById = { ...(initialLogistics || {}) };
   const targets = kept.filter((order) => needsLogistics(order.statusInfo && order.statusInfo.text));
   let index = 0;
     let failCount = 0;
@@ -215,10 +214,21 @@ async function queryLogistics(kept, input, logger, onLog, onProgress) {
     const stop = input.shouldStop();
     if (stop) return { stopped: stop, logisticsById, failCount };
     const orderId = order.id == null ? '' : String(order.id);
+    if (logisticsById[orderId] && (logisticsById[orderId].company || logisticsById[orderId].trackingNo)) {
+      continue;
+    }
     const status = order.statusInfo ? order.statusInfo.text : '';
     if (!needsLogistics(status)) {
       push(logger, onLog, 'info', messages.skipLogistics(orderId, status));
       continue;
+    }
+    if (typeof input.onCheckpoint === 'function') {
+      input.onCheckpoint({
+        phase: 'logistics',
+        keptOrders: kept,
+        seenIds: kept.map((item) => (item.id == null ? '' : String(item.id))),
+        logisticsById,
+      });
     }
     index += 1;
     onProgress(messages.progressLogistics(index, targets.length));
@@ -414,22 +424,27 @@ async function runExport(input) {
     const labels = input.statuses.map(statusLabel).join('、');
     push(logger, onLog, 'info', messages.statusFilter(labels));
   }
-  const kept = [];
-  const seen = new Set();
+  const kept = Array.isArray(input.resume && input.resume.keptOrders) ? input.resume.keptOrders.slice() : [];
+  const seen = new Set(Array.isArray(input.resume && input.resume.seenIds)
+    ? input.resume.seenIds
+    : kept.map((order) => (order.id == null ? '' : String(order.id))));
   const now = (input.now || (() => new Date()))();
   const readHistory = isBeforeThreeMonths(input.startDate, now);
-  for (const orderStatus of officialOrderStatuses(input.statuses)) {
-    if (orderStatus) {
-      push(logger, onLog, 'info', messages.officialStatus(labelForOfficialStatus(orderStatus), orderStatus));
-    }
-    const recent = await pageThrough(input, logger, onLog, onProgress, kept, seen, false, orderStatus);
-    if (recent.stopped) return rememberStop(recent.stopped, kept, logger, onLog);
-    if (recent.fatal) return stopWith(recent.fatal.kind, recent.fatal.message, kept, logger, onLog);
-    if (readHistory) {
-      push(logger, onLog, 'info', messages.historyStart());
-      const history = await pageThrough(input, logger, onLog, onProgress, kept, seen, true, orderStatus);
-      if (history.stopped) return rememberStop(history.stopped, kept, logger, onLog);
-      if (history.fatal) return stopWith(history.fatal.kind, history.fatal.message, kept, logger, onLog);
+  const skipList = !!(input.resume && input.resume.phase === 'logistics');
+  if (!skipList) {
+    for (const orderStatus of officialOrderStatuses(input.statuses)) {
+      if (orderStatus) {
+        push(logger, onLog, 'info', messages.officialStatus(labelForOfficialStatus(orderStatus), orderStatus));
+      }
+      const recent = await pageThrough(input, logger, onLog, onProgress, kept, seen, false, orderStatus);
+      if (recent.stopped) return rememberStop(recent.stopped, kept, logger, onLog);
+      if (recent.fatal) return stopWith(recent.fatal.kind, recent.fatal.message, kept, logger, onLog);
+      if (readHistory) {
+        push(logger, onLog, 'info', messages.historyStart());
+        const history = await pageThrough(input, logger, onLog, onProgress, kept, seen, true, orderStatus);
+        if (history.stopped) return rememberStop(history.stopped, kept, logger, onLog);
+        if (history.fatal) return stopWith(history.fatal.kind, history.fatal.message, kept, logger, onLog);
+      }
     }
   }
 
@@ -438,7 +453,14 @@ async function runExport(input) {
     return resultOf('empty', [], logger, 0, [], {});
   }
 
-  const queried = await queryLogistics(kept, input, logger, onLog, onProgress);
+  const queried = await queryLogistics(
+    kept,
+    input,
+    logger,
+    onLog,
+    onProgress,
+    input.resume && input.resume.logisticsById
+  );
   if (queried.risk) {
     push(logger, onLog, 'error', messages.captcha(kept.length));
     if (kept.length > 0) {

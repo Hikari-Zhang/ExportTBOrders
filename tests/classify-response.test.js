@@ -18,6 +18,11 @@ test('登录地址判定为未登录', () => {
   assert.equal(classifyListResponse('https://passport.taobao.com/ac/login.htm').type, 'login');
 });
 
+test('英文滑块页识别为验证', () => {
+  const page = '<h1>Please drag the slider to verify</h1><p>Verify to ensure normal access</p><span>Please slide to verify</span>';
+  assert.equal(classifyListResponse(page).type, 'captcha');
+});
+
 test('验证码和风控立刻识别', () => {
   assert.equal(classifyListResponse('请输入验证码').type, 'captcha');
   assert.equal(classifyListResponse('_____tmd_____').type, 'captcha');

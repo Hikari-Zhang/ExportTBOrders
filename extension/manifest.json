@@ -18,11 +18,14 @@
     "https://detail.tmall.com/*",
     "https://buy.tmall.com/*"
   ],
+  "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": [
-        "https://buyertrade.taobao.com/trade/itemlist/*",
-        "https://trade.taobao.com/trade/itemlist/*"
+        "https://buyertrade.taobao.com/*",
+        "https://trade.taobao.com/*",
+        "https://tradearchive.taobao.com/*",
+        "https://trade.tmall.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

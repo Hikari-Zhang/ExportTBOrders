@@ -192,6 +192,31 @@ test('验证通过后从当前页继续', async () => {
   assert.ok(texts.some((line) => line.includes('已确认验证通过，继续导出')));
 });
 
+test('英文滑块页会暂停，验证通过后继续', async () => {
+  let calls = 0;
+  const h = harness({}, {});
+  h.input.fetchPage = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return {
+        ok: true,
+        status: 200,
+        text: '<html>Please drag the slider to verify</html>',
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: JSON.stringify({ mainOrders: [order('100', '2026-10-01 10:00:00', '待发货', '杯子')] }),
+    };
+  };
+  h.input.waitForVerification = async () => null;
+  const result = await runExport(h.input);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.rows[0]['订单号'], '100');
+  assert.ok(messagesOf(h.logs).some((line) => line.includes('遇到验证，导出已暂停')));
+});
+
 test('物流验证通过后继续查询后面的订单', async () => {
   const calls = [];
   const pages = {
@@ -673,6 +698,25 @@ test('开始日期早于三个月时继续翻过插队的老订单，并读取�
   assert.ok(messagesOf(h.logs).includes('列表筛选参数：dateBegin=2025-01-01，dateEnd=2025-02-01，startTime=2025-01-01，endTime=2025-02-01，queryMore=true'));
   assert.ok(messagesOf(h.logs).includes('近期列表已翻完，开始读取三个月前的订单'));
   assert.ok(messagesOf(h.logs).includes('按成交时间搜索：2025-01-01 00:00:00 至 2025-02-01 23:59:59'));
+});
+
+test('从物流阶段恢复时不再翻列表', async () => {
+  let pageCalls = 0;
+  const h = harness({}, {});
+  h.input.fetchPage = async () => {
+    pageCalls += 1;
+    return { ok: true, status: 200, text: JSON.stringify({ mainOrders: [] }) };
+  };
+  h.input.resume = {
+    phase: 'logistics',
+    keptOrders: [order('100', '2026-10-01 10:00:00', '待发货', '杯子')],
+    seenIds: ['100'],
+    logisticsById: {},
+  };
+  const result = await runExport(h.input);
+  assert.equal(pageCalls, 0);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.rows[0]['订单号'], '100');
 });
 
 test('开始日期晚于结束日期时不发请求', async () => {

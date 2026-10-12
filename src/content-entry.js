@@ -202,6 +202,19 @@ function removeVerifyBanner() {
   if (box) box.remove();
 }
 
+function pageShowsSlider() {
+  try {
+    const text = document.body ? document.body.innerText : '';
+    return /please drag the slider|please slide to verify|请拖动滑块|滑动验证/i.test(text);
+  } catch {
+    return false;
+  }
+}
+
+function sliderResponse() {
+  return { ok: true, status: 200, text: 'Please drag the slider to verify' };
+}
+
 function listUrlWith(query, datesInUrl) {
   const url = new URL(listUrl());
   if (query._tb_token_) url.searchParams.set('_tb_token_', query._tb_token_);
@@ -214,6 +227,7 @@ function listUrlWith(query, datesInUrl) {
 }
 
 async function postList(query, datesInUrl) {
+  if (pageShowsSlider()) return sliderResponse();
   const response = await fetch(listUrlWith(query, datesInUrl), {
     method: 'POST',
     credentials: 'include',
@@ -363,7 +377,12 @@ async function startExport(message, fromPopup) {
       onLog(line) {
         publish({ type: 'log', line });
       },
+      onCheckpoint(snapshot) {
+        persistExport(message, snapshot);
+      },
+      resume: message.resume,
     });
+    clearExportState();
     const popupOpen = fromPopup && activePort && !portDisconnected;
     if (popupOpen) {
       try {
@@ -402,17 +421,75 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-pagePanel = mountPagePanel({
-  onStart(options) {
-    startExport(options, false);
-  },
-  onCancel() {
-    stopKind = 'cancel';
-  },
-  onResume() {
-    resumeVerification();
-  },
-});
+const ORDER_LIST_PAGE = 'https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm';
+
+function punishPage() {
+  const href = location.href;
+  return href.includes('_____tmd_____') || href.includes('x5secdata') || /[?&]x5step=/.test(href);
+}
+
+function persistExport(message, snapshot) {
+  if (!chrome.storage || !chrome.storage.session) return;
+  chrome.storage.session.set({
+    tbExport: {
+      message: {
+        startDate: message.startDate,
+        endDate: message.endDate,
+        format: message.format,
+        statuses: message.statuses,
+        downloadLog: !!message.downloadLog,
+      },
+      orderPageUrl: ORDER_LIST_PAGE,
+      snapshot,
+      resumeRequested: false,
+    },
+  });
+}
+
+function clearExportState() {
+  if (!chrome.storage || !chrome.storage.session) return;
+  chrome.storage.session.remove('tbExport');
+}
+
+function bootExportUi() {
+  if (punishPage()) {
+    showVerifyBanner(() => {
+      chrome.storage.session.get('tbExport').then((stored) => {
+        const data = stored && stored.tbExport;
+        const back = data && data.orderPageUrl ? data.orderPageUrl : ORDER_LIST_PAGE;
+        if (data) {
+          data.resumeRequested = true;
+          chrome.storage.session.set({ tbExport: data }).then(() => {
+            location.href = back;
+          });
+          return;
+        }
+        location.href = back;
+      });
+    }, location.href);
+    return;
+  }
+  pagePanel = mountPagePanel({
+    onStart(options) {
+      startExport(options, false);
+    },
+    onCancel() {
+      stopKind = 'cancel';
+    },
+    onResume() {
+      resumeVerification();
+    },
+  });
+  chrome.storage.session.get('tbExport').then((stored) => {
+    const data = stored && stored.tbExport;
+    if (!data || !data.resumeRequested || !data.snapshot) return;
+    data.resumeRequested = false;
+    chrome.storage.session.set({ tbExport: data });
+    startExport({ ...data.message, resume: data.snapshot }, false);
+  });
+}
+
+bootExportUi();
 
 function tradeOrigin() {
   const host = location.hostname;
@@ -469,11 +546,21 @@ async function requestLegacyPage(url) {
   });
   if (!response) return { ok: false, status: 0, text: '', error: '无响应' };
   const bytes = new Uint8Array(response.bytes || []);
+  const text = decodeResponseBytes(bytes, response.contentType);
+  const finalUrl = response.finalUrl || '';
+  if (response.punish || finalUrl.includes('_____tmd_____') || finalUrl.includes('x5secdata')) {
+    return {
+      ok: false,
+      status: response.status,
+      error: response.error || '',
+      text: `${text}\n_____tmd_____\nPlease drag the slider to verify`,
+    };
+  }
   return {
     ok: response.ok,
     status: response.status,
     error: response.error || '',
-    text: decodeResponseBytes(bytes, response.contentType),
+    text,
   };
 }
 
@@ -483,6 +570,9 @@ function pageHasWaybill(text) {
 }
 
 async function fetchLegacyLogistics(orderId) {
+  if (pageShowsSlider()) {
+    return { ok: true, status: 200, text: 'Please drag the slider to verify', blocked: true };
+  }
   const urls = detailPageUrls(orderId);
   let last = { ok: false, status: 0, text: '', error: '' };
   let sawCaptcha = false;
@@ -493,17 +583,30 @@ async function fetchLegacyLogistics(orderId) {
     if (page.ok && pageHasWaybill(text)) return page;
     if (isCaptchaChallenge(text)) sawCaptcha = true;
   }
-  if (sawCaptcha) return { ...last, blocked: true };
+  if (sawCaptcha) {
+    return {
+      ok: false,
+      status: 200,
+      text: 'Please drag the slider to verify\n_____tmd_____',
+      blocked: true,
+      error: '',
+    };
+  }
   return last;
 }
 
 async function fetchLogistics(orderId) {
+  if (pageShowsSlider()) return sliderResponse();
   const response = await fetch(logisticsUrl(orderId), { credentials: 'include' });
   const bytes = new Uint8Array(await response.arrayBuffer());
+  const text = decodeResponseBytes(bytes, response.headers.get('content-type'));
+  if (pageShowsSlider() || /please drag the slider|please slide to verify/i.test(text)) {
+    return sliderResponse();
+  }
   return {
     ok: response.ok,
     status: response.status,
-    text: decodeResponseBytes(bytes, response.headers.get('content-type')),
+    text,
   };
 }
 

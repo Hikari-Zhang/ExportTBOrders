@@ -684,6 +684,11 @@
   // src/classify-response.js
   var require_classify_response = __commonJS({
     "src/classify-response.js"(exports, module) {
+      function hasSliderPrompt(body) {
+        const text = body == null ? "" : String(body);
+        const lower = text.toLowerCase();
+        return text.includes("\u8BF7\u62D6\u52A8\u6ED1\u5757") || text.includes("\u6ED1\u52A8\u9A8C\u8BC1") || text.includes("\u8BF7\u5B8C\u6210\u9A8C\u8BC1") || text.includes("\u5B89\u5168\u9A8C\u8BC1") || lower.includes("please drag the slider") || lower.includes("please slide to verify");
+      }
       function classifyListResponse(text) {
         const body = text == null ? "" : String(text);
         let json = null;
@@ -698,14 +703,14 @@
         if (body.includes("login.taobao.com") || body.includes("passport.taobao.com")) {
           return { type: "login" };
         }
-        if (body.includes("\u9A8C\u8BC1\u7801") || body.includes("_____tmd_____") || body.includes("x5secdata") || body.includes("punish") || body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE") || json && (json.url || json.rgv587_flag)) {
+        if (hasSliderPrompt(body) || body.includes("\u9A8C\u8BC1\u7801") || body.includes("_____tmd_____") || body.includes("x5secdata") || body.includes("punish") || body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE") || json && (json.url || json.rgv587_flag)) {
           return { type: "captcha" };
         }
         if (!json) return { type: "retryable", reason: "\u54CD\u5E94\u4E0D\u662F JSON" };
         const keys = json && typeof json === "object" && !Array.isArray(json) ? Object.keys(json).join(",") : "\u975E\u5BF9\u8C61";
         return { type: "unrecognized", keys };
       }
-      module.exports = { classifyListResponse };
+      module.exports = { classifyListResponse, hasSliderPrompt };
     }
   });
 
@@ -720,7 +725,7 @@
       var { needsLogistics, buildRows: buildRows2 } = require_parse_orders();
       var { parseLogisticsBody } = require_parse_logistics();
       var { parseLegacyLogistics: parseLegacyLogistics2 } = require_parse_legacy_logistics();
-      var { classifyListResponse } = require_classify_response();
+      var { classifyListResponse, hasSliderPrompt } = require_classify_response();
       var PAGE_SIZE = 15;
       var LOGISTICS_GAP_MS = 400;
       function push(logger, onLog, level, message) {
@@ -746,7 +751,7 @@
       function isCaptchaChallenge2(text) {
         const body = text == null ? "" : String(text);
         if (!body.trim() || looksLikeOrderPage(body) || looksLikeLogisticsPage(body)) return false;
-        return body.includes("_____tmd_____") || body.includes("FAIL_SYS_USER_VALIDATE") || body.includes("\u8BF7\u5B8C\u6210\u9A8C\u8BC1") || body.includes("\u6ED1\u52A8\u9A8C\u8BC1") || body.includes("\u5B89\u5168\u9A8C\u8BC1");
+        return hasSliderPrompt(body) || body.includes("_____tmd_____") || body.includes("FAIL_SYS_USER_VALIDATE");
       }
       function isLogisticsRisk(text) {
         const body = text == null ? "" : String(text);
@@ -761,7 +766,7 @@
         if (json) {
           return body.includes("rgv587_flag") || body.includes("FAIL_SYS_USER_VALIDATE") || !!(json.url || json.rgv587_flag);
         }
-        return body.includes("_____tmd_____") || body.includes("FAIL_SYS_USER_VALIDATE") || body.includes("rgv587_flag");
+        return hasSliderPrompt(body) || body.includes("_____tmd_____") || body.includes("FAIL_SYS_USER_VALIDATE") || body.includes("rgv587_flag");
       }
       function listCursor(text) {
         try {
@@ -881,8 +886,8 @@
         if (!usableLogistics(parsed)) return { reason: parsed.reason || "\u65E7\u7248\u7269\u6D41\u9875\u65E0\u7269\u6D41\u4FE1\u606F" };
         return { parsed };
       }
-      async function queryLogistics(kept, input, logger, onLog, onProgress) {
-        const logisticsById = {};
+      async function queryLogistics(kept, input, logger, onLog, onProgress, initialLogistics) {
+        const logisticsById = { ...initialLogistics || {} };
         const targets = kept.filter((order) => needsLogistics(order.statusInfo && order.statusInfo.text));
         let index = 0;
         let failCount = 0;
@@ -891,10 +896,21 @@
           const stop = input.shouldStop();
           if (stop) return { stopped: stop, logisticsById, failCount };
           const orderId = order.id == null ? "" : String(order.id);
+          if (logisticsById[orderId] && (logisticsById[orderId].company || logisticsById[orderId].trackingNo)) {
+            continue;
+          }
           const status = order.statusInfo ? order.statusInfo.text : "";
           if (!needsLogistics(status)) {
             push(logger, onLog, "info", messages2.skipLogistics(orderId, status));
             continue;
+          }
+          if (typeof input.onCheckpoint === "function") {
+            input.onCheckpoint({
+              phase: "logistics",
+              keptOrders: kept,
+              seenIds: kept.map((item) => item.id == null ? "" : String(item.id)),
+              logisticsById
+            });
           }
           index += 1;
           onProgress(messages2.progressLogistics(index, targets.length));
@@ -1089,29 +1105,39 @@
           const labels = input.statuses.map(statusLabel).join("\u3001");
           push(logger, onLog, "info", messages2.statusFilter(labels));
         }
-        const kept = [];
-        const seen = /* @__PURE__ */ new Set();
+        const kept = Array.isArray(input.resume && input.resume.keptOrders) ? input.resume.keptOrders.slice() : [];
+        const seen = new Set(Array.isArray(input.resume && input.resume.seenIds) ? input.resume.seenIds : kept.map((order) => order.id == null ? "" : String(order.id)));
         const now = (input.now || (() => /* @__PURE__ */ new Date()))();
         const readHistory = isBeforeThreeMonths(input.startDate, now);
-        for (const orderStatus of officialOrderStatuses(input.statuses)) {
-          if (orderStatus) {
-            push(logger, onLog, "info", messages2.officialStatus(labelForOfficialStatus(orderStatus), orderStatus));
-          }
-          const recent = await pageThrough(input, logger, onLog, onProgress, kept, seen, false, orderStatus);
-          if (recent.stopped) return rememberStop(recent.stopped, kept, logger, onLog);
-          if (recent.fatal) return stopWith(recent.fatal.kind, recent.fatal.message, kept, logger, onLog);
-          if (readHistory) {
-            push(logger, onLog, "info", messages2.historyStart());
-            const history = await pageThrough(input, logger, onLog, onProgress, kept, seen, true, orderStatus);
-            if (history.stopped) return rememberStop(history.stopped, kept, logger, onLog);
-            if (history.fatal) return stopWith(history.fatal.kind, history.fatal.message, kept, logger, onLog);
+        const skipList = !!(input.resume && input.resume.phase === "logistics");
+        if (!skipList) {
+          for (const orderStatus of officialOrderStatuses(input.statuses)) {
+            if (orderStatus) {
+              push(logger, onLog, "info", messages2.officialStatus(labelForOfficialStatus(orderStatus), orderStatus));
+            }
+            const recent = await pageThrough(input, logger, onLog, onProgress, kept, seen, false, orderStatus);
+            if (recent.stopped) return rememberStop(recent.stopped, kept, logger, onLog);
+            if (recent.fatal) return stopWith(recent.fatal.kind, recent.fatal.message, kept, logger, onLog);
+            if (readHistory) {
+              push(logger, onLog, "info", messages2.historyStart());
+              const history = await pageThrough(input, logger, onLog, onProgress, kept, seen, true, orderStatus);
+              if (history.stopped) return rememberStop(history.stopped, kept, logger, onLog);
+              if (history.fatal) return stopWith(history.fatal.kind, history.fatal.message, kept, logger, onLog);
+            }
           }
         }
         if (kept.length === 0) {
           push(logger, onLog, "error", messages2.noOrders());
           return resultOf("empty", [], logger, 0, [], {});
         }
-        const queried = await queryLogistics(kept, input, logger, onLog, onProgress);
+        const queried = await queryLogistics(
+          kept,
+          input,
+          logger,
+          onLog,
+          onProgress,
+          input.resume && input.resume.logisticsById
+        );
         if (queried.risk) {
           push(logger, onLog, "error", messages2.captcha(kept.length));
           if (kept.length > 0) {
@@ -34891,6 +34917,17 @@
     const box = document.getElementById("tb-export-verify");
     if (box) box.remove();
   }
+  function pageShowsSlider() {
+    try {
+      const text = document.body ? document.body.innerText : "";
+      return /please drag the slider|please slide to verify|请拖动滑块|滑动验证/i.test(text);
+    } catch {
+      return false;
+    }
+  }
+  function sliderResponse() {
+    return { ok: true, status: 200, text: "Please drag the slider to verify" };
+  }
   function listUrlWith(query, datesInUrl) {
     const url = new URL(listUrl());
     if (query._tb_token_) url.searchParams.set("_tb_token_", query._tb_token_);
@@ -34902,6 +34939,7 @@
     return url.toString();
   }
   async function postList(query, datesInUrl) {
+    if (pageShowsSlider()) return sliderResponse();
     const response = await fetch(listUrlWith(query, datesInUrl), {
       method: "POST",
       credentials: "include",
@@ -35046,8 +35084,13 @@
         },
         onLog(line) {
           publish({ type: "log", line });
-        }
+        },
+        onCheckpoint(snapshot) {
+          persistExport(message, snapshot);
+        },
+        resume: message.resume
       });
+      clearExportState();
       const popupOpen = fromPopup && activePort && !portDisconnected;
       if (popupOpen) {
         try {
@@ -35084,17 +35127,70 @@
       startExport(message, true);
     });
   });
-  pagePanel = mountPagePanel({
-    onStart(options) {
-      startExport(options, false);
-    },
-    onCancel() {
-      stopKind = "cancel";
-    },
-    onResume() {
-      resumeVerification();
+  var ORDER_LIST_PAGE = "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm";
+  function punishPage() {
+    const href = location.href;
+    return href.includes("_____tmd_____") || href.includes("x5secdata") || /[?&]x5step=/.test(href);
+  }
+  function persistExport(message, snapshot) {
+    if (!chrome.storage || !chrome.storage.session) return;
+    chrome.storage.session.set({
+      tbExport: {
+        message: {
+          startDate: message.startDate,
+          endDate: message.endDate,
+          format: message.format,
+          statuses: message.statuses,
+          downloadLog: !!message.downloadLog
+        },
+        orderPageUrl: ORDER_LIST_PAGE,
+        snapshot,
+        resumeRequested: false
+      }
+    });
+  }
+  function clearExportState() {
+    if (!chrome.storage || !chrome.storage.session) return;
+    chrome.storage.session.remove("tbExport");
+  }
+  function bootExportUi() {
+    if (punishPage()) {
+      showVerifyBanner(() => {
+        chrome.storage.session.get("tbExport").then((stored) => {
+          const data = stored && stored.tbExport;
+          const back = data && data.orderPageUrl ? data.orderPageUrl : ORDER_LIST_PAGE;
+          if (data) {
+            data.resumeRequested = true;
+            chrome.storage.session.set({ tbExport: data }).then(() => {
+              location.href = back;
+            });
+            return;
+          }
+          location.href = back;
+        });
+      }, location.href);
+      return;
     }
-  });
+    pagePanel = mountPagePanel({
+      onStart(options) {
+        startExport(options, false);
+      },
+      onCancel() {
+        stopKind = "cancel";
+      },
+      onResume() {
+        resumeVerification();
+      }
+    });
+    chrome.storage.session.get("tbExport").then((stored) => {
+      const data = stored && stored.tbExport;
+      if (!data || !data.resumeRequested || !data.snapshot) return;
+      data.resumeRequested = false;
+      chrome.storage.session.set({ tbExport: data });
+      startExport({ ...data.message, resume: data.snapshot }, false);
+    });
+  }
+  bootExportUi();
   function tradeOrigin() {
     const host = location.hostname;
     if (host === "buyertrade.taobao.com" || host === "trade.taobao.com") return location.origin;
@@ -35144,11 +35240,23 @@
     });
     if (!response) return { ok: false, status: 0, text: "", error: "\u65E0\u54CD\u5E94" };
     const bytes = new Uint8Array(response.bytes || []);
+    const text = decodeResponseBytes(bytes, response.contentType);
+    const finalUrl = response.finalUrl || "";
+    if (response.punish || finalUrl.includes("_____tmd_____") || finalUrl.includes("x5secdata")) {
+      return {
+        ok: false,
+        status: response.status,
+        error: response.error || "",
+        text: `${text}
+_____tmd_____
+Please drag the slider to verify`
+      };
+    }
     return {
       ok: response.ok,
       status: response.status,
       error: response.error || "",
-      text: decodeResponseBytes(bytes, response.contentType)
+      text
     };
   }
   function pageHasWaybill(text) {
@@ -35156,6 +35264,9 @@
     return !!(parsed.ok && (parsed.company || parsed.trackingNo));
   }
   async function fetchLegacyLogistics(orderId) {
+    if (pageShowsSlider()) {
+      return { ok: true, status: 200, text: "Please drag the slider to verify", blocked: true };
+    }
     const urls = detailPageUrls(orderId);
     let last = { ok: false, status: 0, text: "", error: "" };
     let sawCaptcha = false;
@@ -35166,16 +35277,29 @@
       if (page.ok && pageHasWaybill(text)) return page;
       if (isCaptchaChallenge(text)) sawCaptcha = true;
     }
-    if (sawCaptcha) return { ...last, blocked: true };
+    if (sawCaptcha) {
+      return {
+        ok: false,
+        status: 200,
+        text: "Please drag the slider to verify\n_____tmd_____",
+        blocked: true,
+        error: ""
+      };
+    }
     return last;
   }
   async function fetchLogistics(orderId) {
+    if (pageShowsSlider()) return sliderResponse();
     const response = await fetch(logisticsUrl(orderId), { credentials: "include" });
     const bytes = new Uint8Array(await response.arrayBuffer());
+    const text = decodeResponseBytes(bytes, response.headers.get("content-type"));
+    if (pageShowsSlider() || /please drag the slider|please slide to verify/i.test(text)) {
+      return sliderResponse();
+    }
     return {
       ok: response.ok,
       status: response.status,
-      text: decodeResponseBytes(bytes, response.headers.get("content-type"))
+      text
     };
   }
   function withExtraLogs(logText, entries) {

@@ -1,3 +1,14 @@
+function hasSliderPrompt(body) {
+  const text = body == null ? '' : String(body);
+  const lower = text.toLowerCase();
+  return text.includes('请拖动滑块')
+    || text.includes('滑动验证')
+    || text.includes('请完成验证')
+    || text.includes('安全验证')
+    || lower.includes('please drag the slider')
+    || lower.includes('please slide to verify');
+}
+
 function classifyListResponse(text) {
   const body = text == null ? '' : String(text);
   let json = null;
@@ -13,7 +24,8 @@ function classifyListResponse(text) {
     return { type: 'login' };
   }
   if (
-    body.includes('验证码')
+    hasSliderPrompt(body)
+    || body.includes('验证码')
     || body.includes('_____tmd_____')
     || body.includes('x5secdata')
     || body.includes('punish')
@@ -30,4 +42,4 @@ function classifyListResponse(text) {
   return { type: 'unrecognized', keys };
 }
 
-module.exports = { classifyListResponse };
+module.exports = { classifyListResponse, hasSliderPrompt };

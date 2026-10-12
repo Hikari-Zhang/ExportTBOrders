@@ -9,11 +9,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     },
   })
     .then(async (response) => {
+      const finalUrl = response.url || '';
+      const punish = finalUrl.includes('_____tmd_____') || finalUrl.includes('x5secdata');
       const bytes = new Uint8Array(await response.arrayBuffer());
       sendResponse({
-        ok: response.ok,
+        ok: response.ok && !punish,
         status: response.status,
         contentType: response.headers.get('content-type') || '',
+        finalUrl,
+        punish,
         bytes: Array.from(bytes),
       });
     })
